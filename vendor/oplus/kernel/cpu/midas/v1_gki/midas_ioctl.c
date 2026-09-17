@@ -127,8 +127,19 @@ static void update_or_create_entry_locked(uid_t uid, struct task_struct *p, u64 
 		/* Get tgid name */
 		rcu_read_lock();
 		task = find_task_by_vpid(midas_mmap_buf.entrys[i].id[ID_TGID]);
+		/*
+		 * find_task_by_vpid() resolves the pid in the *current* pid
+		 * namespace, but id[ID_TGID] is a global (root-ns) pid. For a
+		 * task living in another pid namespace (e.g. a container) the
+		 * lookup returns NULL, and the strncpy() below then dereferences
+		 * a NULL pointer -> kernel panic. Guard the pointer and read
+		 * ->comm under the same rcu_read_lock().
+		 */
+		if (task)
+			strncpy(midas_mmap_buf.entrys[i].tgid_name, task->comm, TASK_COMM_LEN);
+		else
+			midas_mmap_buf.entrys[i].tgid_name[0] = '\0';
 		rcu_read_unlock();
-		strncpy(midas_mmap_buf.entrys[i].tgid_name, task->comm, TASK_COMM_LEN);
 	}
 
 	/* the unit of time_in_state is ms */
