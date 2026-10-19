@@ -36,6 +36,9 @@
 
 #include "trace_sched_assist.h"
 
+#ifdef CONFIG_OPLUS_CPU_AUDIO_PERF
+#include "sa_audio.h"
+#endif
 extern unsigned int sysctl_sched_latency;
 
 #define MS_TO_NS (1000000)
@@ -69,6 +72,42 @@ int oplus_idle_cpu(int cpu)
 	return 1;
 }
 
+inline bool is_heavy_load_ux_task(struct task_struct *task)
+{
+	struct ux_sched_cputopo ux_cputopo = ux_sched_cputopo;
+	int heavy_load_threshold;
+	bool ret = false;
+
+	struct oplus_task_struct *ots = get_oplus_task_struct(task);
+	if (IS_ERR_OR_NULL(ots))
+		return false;
+
+	heavy_load_threshold = (ux_cputopo.sched_cls[0].capacity >> 1);
+	ret = is_task_util_over(task, heavy_load_threshold);
+
+	return ret;
+}
+
+inline bool is_high_priority_pipeline_task(struct task_struct *task)
+{
+	int ux_priority;
+
+	struct oplus_task_struct *ots = get_oplus_task_struct(task);
+	if (IS_ERR_OR_NULL(ots))
+		return false;
+
+	/* Audio thread is usually a light thread, not need boost to prime cpus */
+	if (ots->ux_state & SA_TYPE_SWIFT)
+		return false;
+
+	ux_priority = ux_state_to_priority(ots->ux_state);
+	/* Above of UX_PRIORITY_PIPELINE be regarded as high priority base on local testing*/
+	if (ux_priority > (uint)(UX_PRIORITY_PIPELINE >> SCHED_ASSIST_UX_PRIORITY_SHIFT))
+		return true;
+
+	return false;
+}
+
 inline int get_task_cls_for_scene(struct task_struct *task)
 {
 	struct ux_sched_cputopo ux_cputopo = ux_sched_cputopo;
@@ -88,12 +127,31 @@ inline int get_task_cls_for_scene(struct task_struct *task)
 			cls_mid = cls_max;
 	}
 
+	if (global_lowend_plat_opt) {
+		if (global_less_prime_cpu_arch) {
+			if (is_high_priority_pipeline_task(task))
+				return cls_mid;
+			else
+				return 0;
+		}
+
+		/* for launch scene, heavy ux task should not move to min capacity cluster */
+		if (sched_assist_scene(SA_LAUNCH) && test_ux_type(task, SA_TYPE_HEAVY | SA_TYPE_ANIMATOR)
+			&& is_heavy_load_ux_task(task))
+			return test_ux_type(task, SA_TYPE_ANIMATOR) ? cls_mid : cls_max;
+
+		/* TOP APP's UI&Renderthread boost to big CPU */
+		if (test_ux_type(task, SA_TYPE_HEAVY) && is_heavy_load_top_task(task))
+			return cls_mid;
+	}
+
 	/* for launch scene, heavy ux task should not move to min capacity cluster */
 	if (sched_assist_scene(SA_LAUNCH) && test_ux_type(task, SA_TYPE_HEAVY | SA_TYPE_ANIMATOR))
 		return test_ux_type(task, SA_TYPE_ANIMATOR) ? cls_mid : cls_max;
 
-	if (global_lowend_plat_opt && test_ux_type(task, SA_TYPE_HEAVY) && is_heavy_load_top_task(task))
+	/*if (global_lowend_plat_opt && test_ux_type(task, SA_TYPE_HEAVY) && is_heavy_load_top_task(task))
 		return cls_mid;
+	*/
 
 	if (sched_assist_scene(SA_ANIM) && test_ux_type(task, SA_TYPE_ANIMATOR))
 		return is_task_util_over(task, BOOST_THRESHOLD_UNIT) ? cls_mid : 0;
@@ -269,6 +327,17 @@ static inline bool select_target_cpu_fastpath(struct task_struct *task, int targ
 	struct rq *orig_rq = cpu_rq(target_cpu);
 	struct oplus_rq *orig_orq = get_oplus_rq(orig_rq);
 
+	bool latency_sensitive = false;
+
+	if (global_lowend_plat_opt && global_less_prime_cpu_arch) {
+		/* Audio thread prefer to idle cpu as latency_sensitive, so respect this choice */
+		oplus_sched_assist_audio_latency_sensitive(task, &latency_sensitive);
+		if ((latency_sensitive == true) && oplus_idle_cpu(target_cpu))
+			return true;
+		else
+			return false;
+	}
+
 	if (test_task_ux(orig_rq->curr))
 		return false;
 
@@ -433,7 +502,7 @@ bool set_ux_task_to_prefer_cpu(struct task_struct *task, int *orig_target_cpu)
 	unsigned long best_idle_cuml_util = ULONG_MAX;
 	bool walk_next_cls = true;
 	bool ux_cls_boost = false;
-	int cpu_rq_ux_runnable_cnt = UINT_MAX;
+	unsigned int cpu_rq_ux_runnable_cnt = UINT_MAX;
 	int least_nr_cpu = -1;
 	int subopt_cpu = -1, vip_cpu = -1, max_subopt_cpu = -1;
 	long spare_cap = 0, subopt_max_spare_cap = 0;
@@ -461,9 +530,11 @@ bool set_ux_task_to_prefer_cpu(struct task_struct *task, int *orig_target_cpu)
 	 * Avoiding ux core selection can easily lead to small cores for tasks
 	 * that would otherwise be on large cores
 	 */
-	if (start_cls < orig_cls_id) {
-		start_cls = orig_cls_id;
-		cls_nr = orig_cls_id;
+	if (!(global_lowend_plat_opt && global_less_prime_cpu_arch)) {
+		if (start_cls < orig_cls_id) {
+			start_cls = orig_cls_id;
+			cls_nr = orig_cls_id;
+		}
 	}
 	if (cls_nr != ux_cputopo.cls_nr - 1)
 		direction = 1;
@@ -487,8 +558,13 @@ retry:
 #endif
 
 		/* fit status to check if taks util fits cpu capacity */
-		if (cls_nr == 0 && (!task_fits_max(task, cpu) || ux_cls_boost))
-			break;
+		if (global_lowend_plat_opt && global_less_prime_cpu_arch) {
+			if (cls_nr == 0 && ((oplus_task_util(task) > (ux_cputopo.sched_cls[1].capacity >> 1)) || ux_cls_boost))
+				break;
+		} else {
+			if (cls_nr == 0 && (!task_fits_max(task, cpu) || ux_cls_boost))
+				break;
+		}
 
 		/*
 		 * Find an optimal backup IDLE CPU
@@ -522,9 +598,17 @@ retry:
 		 * EAS picking a small core, pick max_spare_cap cpu and first cluster
 		 */
 		spare_cap = oplus_capacity_spare_of(cpu, task);
-		if (spare_cap > subopt_max_spare_cap) {
-			subopt_max_spare_cap = spare_cap;
-			max_subopt_cpu = cpu;
+		/* Avoid task always been choosed to prime+ cpu who have highest capacity on low-end platform */
+		if (global_lowend_plat_opt && global_less_prime_cpu_arch) {
+			if ((topology_physical_package_id(cpu) == start_cls) && (spare_cap > subopt_max_spare_cap)) {
+				subopt_max_spare_cap = spare_cap;
+				max_subopt_cpu = cpu;
+			}
+		} else {
+			if (spare_cap > subopt_max_spare_cap) {
+				subopt_max_spare_cap = spare_cap;
+				max_subopt_cpu = cpu;
+			}
 		}
 
 		/*
@@ -553,11 +637,15 @@ retry:
 			continue;
 
 		if (rq->curr->prio < MAX_RT_PRIO) {
-			if (spare_cap > rt_max_spare_cap) {
-				rt_max_spare_cap = spare_cap;
-				subopt_cpu = cpu;
+			if (global_lowend_plat_opt && global_less_prime_cpu_arch) {
+				continue;
+			} else {
+				if (spare_cap > rt_max_spare_cap) {
+					rt_max_spare_cap = spare_cap;
+					subopt_cpu = cpu;
+				}
+				continue;
 			}
-			continue;
 		}
 
 		/* If there are rt threads in runnable state on this CPU, drop it! */

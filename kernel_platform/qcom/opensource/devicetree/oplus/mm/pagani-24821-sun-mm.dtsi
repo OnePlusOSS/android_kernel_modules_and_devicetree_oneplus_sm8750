@@ -1,0 +1,15 @@
+&soc {
+    oplus_mm_config: oplus,mm_config {
+        compatible = "oplus,mm_osvelte-config";
+        ram-12g {
+            oplus_bsp_frr {
+                feature-enable;
+            };
+        };
+        ram-16g {
+            oplus_bsp_frr {
+                feature-enable;
+            };
+        };
+    };
+};

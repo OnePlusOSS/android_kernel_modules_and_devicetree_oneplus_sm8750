@@ -1245,6 +1245,17 @@ void oplus_tfa98xx_feedback_init(struct tfa98xx *tfa98xx,
 			tfa98xx->check_work.wq = NULL;
 		}
 	}
+	if (tfa98xx && tfa98xx->tfa && tfa98xx->tfa->dev_idx < tfa_fb.pa_cnt) {
+		if (tfa98xx->tfa->min_mohms > 0 && tfa98xx->tfa->max_mohms > 0) {
+			tfa_fb.r0_cal[tfa98xx->tfa->dev_idx] =
+				(tfa98xx->tfa->min_mohms + tfa98xx->tfa->max_mohms) / 2;
+			pr_info("init r0_cal[%d] = %u (avg of min=%u, max=%u)\n",
+				tfa98xx->tfa->dev_idx,
+				tfa_fb.r0_cal[tfa98xx->tfa->dev_idx],
+				tfa98xx->tfa->min_mohms,
+				tfa98xx->tfa->max_mohms);
+		}
+	}
 }
 
 int oplus_need_check_calib_values(void)

@@ -231,6 +231,7 @@ bool is_heavy_load_top_task(struct task_struct *p)
 }
 
 struct ux_sched_cputopo ux_sched_cputopo;
+bool global_less_prime_cpu_arch;
 
 static inline void sched_init_ux_cputopo(void)
 {
@@ -334,6 +335,25 @@ static void build_oplus_cpu_array(void)
 }
 #endif
 
+inline bool is_less_prime_cpu_arch(void)
+{
+	unsigned int sliver_cpus = 0;
+	unsigned int total_cpus = 0;
+	int i;
+	bool ret = false;
+
+	for (i = 0; i < ux_sched_cputopo.cls_nr; i++) {
+		if (i == 0) {
+			sliver_cpus = cpumask_weight(&ux_sched_cputopo.sched_cls[i].cpus);
+		}
+		total_cpus += cpumask_weight(&ux_sched_cputopo.sched_cls[i].cpus);
+	}
+	/* The number of small cpus at least two more than that of prime cpus */
+	ret = sliver_cpus >= (total_cpus - sliver_cpus + 4);
+
+	return ret;
+}
+
 void update_ux_sched_cputopo(void)
 {
 	unsigned long cpu_cap = 0;
@@ -393,6 +413,8 @@ void update_ux_sched_cputopo(void)
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
 	build_oplus_cpu_array();
 #endif
+
+	global_less_prime_cpu_arch = is_less_prime_cpu_arch();
 }
 EXPORT_SYMBOL(update_ux_sched_cputopo);
 
@@ -1770,7 +1792,6 @@ void android_rvh_find_lowest_rq_handler(void *unused,
 /* register vender hook in kernel/sched/core.c */
 void android_rvh_sched_fork_handler(void *unused, struct task_struct *p)
 {
-	init_task_ux_info(p);
 }
 
 void android_rvh_after_enqueue_task_handler(void *unused, struct rq *rq, struct task_struct *p, int flags)

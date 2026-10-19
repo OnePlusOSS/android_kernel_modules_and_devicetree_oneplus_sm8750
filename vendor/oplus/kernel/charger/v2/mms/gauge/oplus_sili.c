@@ -2087,31 +2087,7 @@ int oplus_gauge_get_battery_type_str(char *type)
 #endif
 }
 
-struct device_node *oplus_get_node_by_type(struct device_node *father_node)
-{
-	char battery_type_str[OPLUS_BATTERY_TYPE_LEN] = { 0 };
-	struct device_node *sub_node = NULL;
-	struct device_node *node = father_node;
-	int rc = oplus_gauge_get_battery_type_str(battery_type_str);
-	if (rc == 0) {
-		sub_node = of_get_child_by_name(father_node, battery_type_str);
-		if (sub_node)
-			node = sub_node;
-	}
-	return node;
-}
 
-struct device_node *oplus_get_node_by_child_gauge(struct device_node *father_node)
-{
-	struct device_node *node = of_find_node_by_path("/soc/oplus_chg_core");
-
-	if (node == NULL)
-		return father_node;
-	if (!of_property_read_bool(node, "oplus,gauge_ic_by_child_node"))
-		return father_node;
-
-	return oplus_get_node_by_type(father_node);
-}
 
 void oplus_mms_gauge_update_super_endurance_mode_status_work(struct work_struct *work)
 {

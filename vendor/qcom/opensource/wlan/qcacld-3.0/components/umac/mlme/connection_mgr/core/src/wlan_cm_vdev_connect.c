@@ -2003,7 +2003,7 @@ cm_send_force_bss_peer_delete_req(struct wlan_objmgr_vdev *vdev)
 
 	join_req = qdf_mem_malloc(sizeof(*join_req));
 	if (!join_req) {
-		mlme_err("malloc fail");
+		cm_send_bss_peer_delete_req(vdev);
 		return QDF_STATUS_E_NOMEM;
 	}
 
@@ -2011,6 +2011,8 @@ cm_send_force_bss_peer_delete_req(struct wlan_objmgr_vdev *vdev)
 	if (QDF_IS_STATUS_ERROR(status)) {
 		mlme_err(CM_PREFIX_FMT "Failed to copy join req",
 			 CM_PREFIX_REF(req.vdev_id, req.cm_id));
+		cm_send_bss_peer_delete_req(vdev);
+
 		cm_free_join_req(join_req);
 		return QDF_STATUS_E_FAILURE;
 	}

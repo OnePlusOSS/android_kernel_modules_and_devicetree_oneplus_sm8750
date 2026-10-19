@@ -63,6 +63,7 @@ oplus_chg_v2-y += oplus_batt_bal.o
 oplus_chg_v2-y += oplus_chg_mutual.o
 oplus_chg_v2-y += oplus_reverse_chg.o
 oplus_chg_v2-y += oplus_dischg_boost.o
+oplus_chg_v2-y += oplus_gamepad.o
 oplus_chg_v2-$(CONFIG_OPLUS_CHG_PARALLEL) += oplus_parallel.o
 
 oplus_chg_v2-y += gauge_ic/oplus_hal_bq27541.o

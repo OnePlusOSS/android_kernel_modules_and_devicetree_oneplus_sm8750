@@ -777,7 +777,8 @@ U_ECC_VLI_API void u_ecc_vli_mod_inv(u_ecc_word_t *result,
 	u_ecc_vli_clear(u, num_words);
 	u[0] = 1;
 	u_ecc_vli_clear(v, num_words);
-	while ((cmpResult = u_ecc_vli_cmp_unsafe(a, b, num_words)) != 0) {
+	cmpResult = u_ecc_vli_cmp_unsafe(a, b, num_words);
+	while (cmpResult != 0) {
 		if (EVEN(a)) {
 			u_ecc_vli_rshift1(a, num_words);
 			vli_mod_inv_update(u, mod, num_words);
@@ -804,6 +805,7 @@ U_ECC_VLI_API void u_ecc_vli_mod_inv(u_ecc_word_t *result,
 			u_ecc_vli_sub(v, v, u, num_words);
 			vli_mod_inv_update(v, mod, num_words);
 		}
+		cmpResult = u_ecc_vli_cmp_unsafe(a, b, num_words);
 	}
 	u_ecc_vli_set(result, u, num_words);
 } /* u_ecc_vli_mod_inv */

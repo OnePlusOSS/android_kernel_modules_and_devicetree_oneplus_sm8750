@@ -117,10 +117,9 @@ UX_PRIORITY_PROTECT: Lowest priority protected ux type
 #define UX_PRIORITY_PROTECT		0x06000000
 #define UX_PRIORITY_TOP_APP		0x0A000000
 #define UX_PRIORITY_AUDIO		0x0A000000
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+
 #define UX_PRIORITY_PIPELINE_UI 0x06000000
 #define UX_PRIORITY_PIPELINE    0x05000000
-#endif
 
 /* define for sched assist scene type, keep same as the define in java file */
 #define SA_SCENE_OPT_CLEAR			(0)
@@ -279,6 +278,7 @@ struct oplus_rq {
 };
 
 extern int global_debug_enabled;
+extern bool global_less_prime_cpu_arch;
 extern int global_sched_assist_enabled;
 extern int global_sched_assist_scene;
 extern int global_silver_perf_core;
@@ -369,8 +369,6 @@ extern migrate_task_callback_t fbg_migrate_task_callback;
 typedef void (*android_rvh_schedule_handler_t)(struct task_struct *prev,
 	struct task_struct *next, struct rq *rq);
 extern android_rvh_schedule_handler_t fbg_android_rvh_schedule_callback;
-
-extern struct kmem_cache *oplus_task_struct_cachep;
 
 #define ots_to_ts(ots)	(ots->task)
 #define OTS_IDX			0
@@ -596,73 +594,6 @@ static inline void oplus_set_inherit_ux_start(struct task_struct *t, u64 start_t
 
 	ots->inherit_ux_start = t->se.sum_exec_runtime;
 }
-
-static inline void init_task_ux_info(struct task_struct *t)
-{
-	struct oplus_task_struct *ots = get_oplus_task_struct(t);
-
-	if (IS_ERR_OR_NULL(ots))
-		return;
-
-	RB_CLEAR_NODE(&ots->ux_entry);
-	RB_CLEAR_NODE(&ots->exec_time_node);
-	ots->ux_state = 0;
-	ots->sub_ux_state = 0;
-	atomic64_set(&ots->inherit_ux, 0);
-	ots->ux_depth = 0;
-	ots->enqueue_time = 0;
-	ots->inherit_ux_start = 0;
-	ots->ux_priority = -1;
-	ots->ux_nice = -1;
-	ots->vruntime = 0;
-	ots->preset_vruntime = 0;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_ABNORMAL_FLAG)
-	ots->abnormal_flag = 0;
-#endif
-#ifdef CONFIG_OPLUS_FEATURE_SCHED_SPREAD
-	ots->lb_state = 0;
-	ots->ld_flag = 0;
-#endif
-	ots->exec_calc_runtime = 0;
-	ots->is_update_runtime = 0;
-	ots->target_process = -1;
-	ots->wake_tid = 0;
-	ots->running_start_time = 0;
-	ots->update_running_start_time = false;
-	ots->last_wake_ts = 0;
-/*#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)*/
-	memset(&ots->lkinfo, 0, sizeof(struct locking_info));
-	INIT_LIST_HEAD(&ots->lkinfo.node);
-/*#endif*/
-	ots->block_start_time = 0;
-#ifdef CONFIG_LOCKING_PROTECT
-	INIT_LIST_HEAD(&ots->locking_entry);
-	ots->locking_start_time = 0;
-	ots->locking_depth = 0;
-#endif
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
-	/* for loadbalance */
-	ots->snap_pcount = 0;
-	ots->snap_run_delay = 0;
-	plist_node_init(&ots->rtb, MAX_IM_FLAG_PRIO);
-#endif
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
-	atomic_set(&ots->pipeline_cpu, -1);
-	ots->is_immuned_thread = 0;
-#endif
-
-#if IS_ENABLED(CONFIG_ARM64_AMU_EXTN) && IS_ENABLED(CONFIG_OPLUS_FEATURE_CPU_JANKINFO)
-	ots->amu_cycle = 0;
-	ots->amu_instruct = 0;
-#endif
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_QOS_SCHED)
-	ots->qos_level = -1;
-	ots->qos_recover_prio = -2;
-#endif
-};
 
 static inline bool test_ux_type(struct task_struct *task, int ux_type)
 {

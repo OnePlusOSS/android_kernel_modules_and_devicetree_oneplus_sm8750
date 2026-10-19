@@ -1385,14 +1385,28 @@
                     "desc": {
                         "zh": "CP 供电异常"
                     },
-                    "str": "err_powe_ng"
+                    "str": "err_cp_power_ng"
                 },
                 {
                     "lable": "TRACK_CP_ERR_VOUT_REVERSE",
                     "desc": {
                         "zh": "CP 反充电压异常"
                     },
-                    "str": "err_vout_reverse"
+                    "str": "err_cp_vout_reverse"
+                },
+                {
+                    "lable": "TRACK_CP_ERR_VBATSNS_OVP",
+                    "desc": {
+                        "zh": "CP VBATSNS过压"
+                    },
+                    "str": "err_cp_vbatsns_ovp"
+                },
+                {
+                    "lable": "TRACK_CP_ERR_VBUS_SHORT",
+                    "desc": {
+                        "zh": "CP VBUS短路"
+                    },
+                    "str": "err_cp_vbus_short"
                 }
             ]
         },
@@ -1535,6 +1549,105 @@
                         "zh": "埋点版本允许的最大版本号"
                     },
                     "str": "100.100"
+                }
+            ]
+        },
+        {
+            "name": "track_buck_device_error",
+            "desc":{
+                "zh": "BUCK器件状态"
+            },
+            "list": [
+                {
+                    "lable": "TRACK_BUCK_ERR_DEFAULT",
+                    "desc": {
+                        "zh": "BUCK默认值"
+                    },
+                    "str": "err_buck_default"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_TSD",
+                    "desc": {
+                        "zh": "TSD过温保护"
+                    },
+                    "str": "err_buck_tsd"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_VSYS_SHORT",
+                    "desc": {
+                        "zh": "VSYS短路"
+                    },
+                    "str": "err_buck_vsys_short"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_VBAT_OVP",
+                    "desc": {
+                        "zh": "VBAT过压保护"
+                    },
+                    "str": "err_buck_vbat_ovp"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_VBUS_OVP",
+                    "desc": {
+                        "zh": "VBUS过压保护"
+                    },
+                    "str": "err_buck_vbus_ovp"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_VAC_OVP",
+                    "desc": {
+                        "zh": "VAC过压保护"
+                    },
+                    "str": "err_buck_vac_ovp"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_VPMID_SHORT",
+                    "desc": {
+                        "zh": "VPMID短路"
+                    },
+                    "str": "err_buck_vpmid_short"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_IBAT_OCP",
+                    "desc": {
+                        "zh": "IBAT过流保护"
+                    },
+                    "str": "err_buck_ibat_ocp"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_IBUS_RCP",
+                    "desc": {
+                        "zh": "IBUS反向电流保护"
+                    },
+                    "str": "err_buck_ibus_rcp"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_CONV_OCP",
+                    "desc": {
+                        "zh": "BUCK/BOOST过流保护"
+                    },
+                    "str": "err_buck_conv_ocp"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_VSYS_OVP",
+                    "desc": {
+                        "zh": "VSYS过压保护"
+                    },
+                    "str": "err_buck_vsys_ovp"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_VPMID_OVP_OTG",
+                    "desc": {
+                        "zh": "VPMID过压保护"
+                    },
+                    "str": "err_buck_vpmid_ovp_otg"
+                },
+                {
+                    "lable": "TRACK_BUCK_ERR_WD_TIMEOUT",
+                    "desc": {
+                        "zh": "看门狗超时"
+                    },
+                    "str": "err_buck_wdt_timeout"
                 }
             ]
         }

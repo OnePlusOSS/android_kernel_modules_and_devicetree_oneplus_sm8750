@@ -1654,6 +1654,35 @@
             }
         },
         {
+            "lable": "OPLUS_IC_FUNC_BUCK_GET_CC_STATE",
+            "desc": {
+                "zh": "获取CC1合CC2的状态"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["u8 *", "u8 *"],
+            "parameter_desc": [
+                {
+                    "range": "0-*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "用于存放CC1状态值"
+                    }
+                },
+                {
+                    "range": "0-*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "用于存放CC2的状态值"
+                    }
+                }
+            ],
+            "vict": {
+                "read": false,
+                "write": false,
+                "overwrite": false
+            }
+        },
+        {
             "lable": "OPLUS_IC_FUNC_BUCK_SET_DPDM_OVP_DISABLE",
             "desc": {
                 "zh": "关闭WCD OVP"
@@ -1674,8 +1703,66 @@
                 "write": false,
                 "overwrite": false
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_BUCK_GET_VDM_INFO",
+            "desc": {
+                "zh": "获取vdm info"
+            },
+            "auto_debug_code": true,
+            "parameter_list": ["u32 *", "int *"],
+            "parameter_desc": [
+                {
+                    "range": "*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "vdm信息数组"
+                    }
+                },
+                {
+                    "range": "*",
+                    "type": "out",
+                    "desc": {
+                        "zh": "vdm信息数量"
+                    }
+                }
+            ],
+            "vict": {
+                "read": {
+                    "cmd": "vict -f {id} -G vic-*",
+                    "desc": {
+                        "zh": "获取vdm info"
+                    }
+                },
+                "write": false,
+                "overwrite": {
+                    "cmd": "vict -f {id} -O {val} vic-*",
+                    "desc": {
+                        "zh": "使用val覆盖vdm info"
+                    }
+                }
+            }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_BUCK_SEND_GET_SINK_CAP",
+            "desc": {
+                "zh": "发送get_sink_cap命令"
+            },
+            "auto_debug_code": true,
+            "parameter_list": [],
+            "parameter_desc": [],
+            "vict": {
+                "read": false,
+                "write": {
+                    "cmd": "vict -f {id} -S vic-*",
+                    "desc": {
+                        "zh": "N/A"
+                    }
+                },
+                "overwrite": false
+            }
         }
     ],
 
-    "version": "V6.0:61:13c694f6469b7670c1a7a50e71b04bff730e313b7c4fe84fbea5f658faae58d3"
+    "version": "V8.0:64:c961fd8b65f56b4b1d4ddccc2bb6ba951b69517bb7c9becec2f0a061d448f4fd"
 }

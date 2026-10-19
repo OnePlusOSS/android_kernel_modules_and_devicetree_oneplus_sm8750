@@ -1,6 +1,7 @@
 #ifndef __MAGCVR_CORE_H__
 #define __MAGCVR_CORE_H__
 
+#include <linux/atomic.h>
 #include <linux/ioctl.h>
 #include <linux/mutex.h>
 #include <linux/delay.h>
@@ -120,6 +121,7 @@ int  magcvr_index = 0;
 #define GET_DATA_TIMN   50
 #define NOISE_STEP      100
 #define M_INDEX         0
+#define MAGCVR_STATS_INDEX_MAX 2
 #define MAG_CVR_SAMPLE_COUNT 10
 #define DELAY_TIME      100
 
@@ -337,6 +339,10 @@ struct magnetic_cover_info {
 	int cal_offset_cnt;
 	bool init_chip_failed;
 	bool no_need_calibration;
+	atomic_long_t stats_attach_wireless_cnt;
+	atomic_long_t stats_attach_pen_cnt;
+	atomic_long_t stats_detach_wireless_cnt;
+	atomic_long_t stats_detach_pen_cnt;
 	// fault injection opt
 	unsigned short fault_injection_opt;
 	int fault_injection_state;

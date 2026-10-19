@@ -586,6 +586,7 @@ struct oplus_chg_comm {
 	int flash_mode;
 	struct delayed_work flash_mode_boost_work;
 	struct delayed_work offline_clean_work;
+	const int (*ui_soc_smooth_table)[RESERVE_SOC_MAX];
 };
 
 typedef struct {
@@ -3358,7 +3359,7 @@ reserve_soc_error:
 	oplus_comm_set_smooth_soc(chip, chip->soc);
 }
 
-static const int soc_jump_table[RESERVE_SOC_MAX + 1][RESERVE_SOC_MAX] = {
+static const int ui_soc_smooth_table[RESERVE_SOC_MAX + 1][RESERVE_SOC_MAX] = {
 	{ -1, -1, -1, -1, -1 }, /* reserve 0 */
 	{ 55, -1, -1, -1, -1 }, /* reserve 1 */
 	{ 36, 71, -1, -1, -1 }, /* reserve 2 */
@@ -3402,12 +3403,12 @@ static void oplus_comm_smooth_to_soc(struct oplus_chg_comm *chip, bool force)
 	}
 
 	for (i = reserve_soc - 1; i >= 0; i--) {
-		if (soc_jump_table[reserve_soc][i] < 0) {
-			chg_err("soc_jump_table invalid, please check it.\n");
+		if (chip->ui_soc_smooth_table[reserve_soc][i] < 0) {
+			chg_err("ui_soc_smooth_table invalid, please check it.\n");
 			goto reserve_soc_error;
 		}
 
-		if (soc >= soc_jump_table[reserve_soc][i]) {
+		if (soc >= chip->ui_soc_smooth_table[reserve_soc][i]) {
 			temp_soc = soc + i + 1;
 			break;
 		}
@@ -3422,9 +3423,9 @@ static void oplus_comm_smooth_to_soc(struct oplus_chg_comm *chip, bool force)
 			chip->rsd.smooth_soc_avg_cnt = SMOOTH_SOC_MIN_FIFO_LEN;
 
 		for (i = 0; i < reserve_soc; i++) {
-			if (soc >= (soc_jump_table[reserve_soc][i] - SOC_JUMP_RANGE_VAL) &&
-			    soc <= (soc_jump_table[reserve_soc][i] + SOC_JUMP_RANGE_VAL)) {
-				chg_debug("soc:%d index:%d soc_jump:%d\n", soc, i, soc_jump_table[reserve_soc][i]);
+			if (soc >= (chip->ui_soc_smooth_table[reserve_soc][i] - SOC_JUMP_RANGE_VAL) &&
+			    soc <= (chip->ui_soc_smooth_table[reserve_soc][i] + SOC_JUMP_RANGE_VAL)) {
+				chg_debug("soc:%d index:%d soc_jump:%d\n", soc, i, chip->ui_soc_smooth_table[reserve_soc][i]);
 				chip->rsd.is_soc_jump_range = true;
 				chip->rsd.smooth_soc_avg_cnt = SMOOTH_SOC_MAX_FIFO_LEN;
 				break;
@@ -5128,16 +5129,6 @@ int oplus_comm_switch_ffc(struct oplus_mms *topic)
 	oplus_comm_ffc_temp_thr_init(chip, ffc_temp_region);
 
 	oplus_comm_set_ffc_step(chip, 0);
-	if (ffc_temp_region < FFC_TEMP_REGION_PRE_NORMAL || ffc_temp_region > FFC_TEMP_REGION_NORMAL) {
-		chg_err("FFC charging is not possible in this temp region, temp_region=%s\n",
-			oplus_comm_get_ffc_temp_region_str(ffc_temp_region));
-		if (is_wired_charging_disable_votable_available(chip)) {
-			vote(chip->wired_charging_disable_votable,
-			     FASTCHG_VOTER, false, 0, false);
-		}
-		rc = -EINVAL;
-		goto err;
-	}
 	if (!chip->wired_online && !chip->wls_online) {
 		chg_err("wired and wireless charge is offline\n");
 		if (is_wired_charging_disable_votable_available(chip)) {
@@ -8978,21 +8969,72 @@ static bool oplus_comm_parse_from_cmdline(struct oplus_chg_comm *chip)
 	return false;
 }
 
+static void oplus_comm_parse_ui_soc_smooth_table_dt(struct oplus_chg_comm *chip, struct device_node *node)
+{
+	int rc = 0;
+	int i = 0, j = 0, len = 0;
+	int (*dynamic_table)[RESERVE_SOC_MAX];
+	int expected_len = (RESERVE_SOC_MAX + 1) * RESERVE_SOC_MAX;
+	u32 tmp_table[(RESERVE_SOC_MAX + 1) * RESERVE_SOC_MAX];
+
+	if (!node) {
+		chg_err("Invalid parameters passed\n");
+		return;
+	}
+
+	len = of_property_count_u32_elems(node, "oplus,ui_soc_smooth_table");
+	if (len > 0) {
+		if (len != expected_len) {
+			chg_err("ui_soc_smooth_table length invalid: len=%d (expected %d), use default\n", len, expected_len);
+			return;
+		}
+
+		rc = of_property_read_u32_array(node, "oplus,ui_soc_smooth_table", tmp_table,
+				(RESERVE_SOC_MAX + 1) * RESERVE_SOC_MAX);
+		if (rc < 0) {
+			chg_err("get oplus,ui_soc_smooth_table, use default\n");
+			return;
+		}
+
+		dynamic_table = devm_kzalloc(chip->dev,
+					sizeof(int) * (RESERVE_SOC_MAX + 1) * RESERVE_SOC_MAX, GFP_KERNEL);
+		if (dynamic_table) {
+			for (i = 0; i < RESERVE_SOC_MAX + 1; i++) {
+				for (j = 0; j < RESERVE_SOC_MAX; j++) {
+					dynamic_table[i][j] = (int)tmp_table[i * RESERVE_SOC_MAX + j];
+				}
+			}
+			chip->ui_soc_smooth_table = dynamic_table;
+			chg_info("use dts ui_soc_smooth_table, elements=%d\n", len);
+		} else {
+			chg_err("alloc ui_soc_smooth_table failed, use default\n");
+		}
+	} else {
+		chg_info("no dts ui_soc_smooth_table, use default\n");
+		return;
+	}
+}
+
 static void oplus_comm_parse_smooth_soc_dt(struct oplus_chg_comm *chip)
 {
 	struct device_node *node = oplus_get_node_by_type(chip->dev->of_node);
 	struct oplus_comm_config *config = &chip->config;
 	int rc;
 
+	chip->ui_soc_smooth_table = ui_soc_smooth_table;
+
 	if (oplus_comm_reserve_soc_by_rus(chip)) {
 		config->smooth_switch = true;
 		config->reserve_soc = chip->rsd.rus_reserve_soc;
+		oplus_comm_parse_ui_soc_smooth_table_dt(chip, node);
 	} else {
 		config->smooth_switch = of_property_read_bool(node, "oplus,smooth_switch");
 		if (config->smooth_switch) {
 			rc = of_property_read_u32(node, "oplus,reserve_chg_soc", &config->reserve_soc);
 			if (rc)
 				config->reserve_soc = RESERVE_SOC_DEFAULT;
+
+			oplus_comm_parse_ui_soc_smooth_table_dt(chip, node);
 		}
 		chg_info("read from dts %d %d\n", config->smooth_switch, config->reserve_soc);
 	}

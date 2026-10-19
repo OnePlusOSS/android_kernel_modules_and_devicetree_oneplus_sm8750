@@ -319,11 +319,12 @@
 		compatible = "oplus,monitor";
 		oplus,topic-update-interval = <60000>;
 
-		track,fast_chg_break_t_thd = <1400>;
+		track,fast_chg_break_t_thd = <2500>;
 		track,general_chg_break_t_thd = <300>;
 		track,voocphy_type = <3>;
 		track,wired_max_power = <67000>;
 		track,wired_fast_chg_scheme = <2>;
+		track,track_ver = <TRACK_VER_4_0>;
 	};
 
 	oplus_vooc: oplus,vooc {

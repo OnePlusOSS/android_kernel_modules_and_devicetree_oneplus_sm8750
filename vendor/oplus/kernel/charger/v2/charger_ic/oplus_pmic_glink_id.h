@@ -144,6 +144,7 @@ enum {
     OPLUS_USB_REVERSE_CHG_SET_CURRENT,
     /* PD partner SVID (lower 16 bits valid) */
     OPLUS_GET_ADAPTER_SVID,
+    OPLUS_SET_PD_SINK_CAP,
     OPLUS_PROPERTY_MAX,
 } oplus_property_type_e;
 #endif /*_USBPD_DPM_H_*/

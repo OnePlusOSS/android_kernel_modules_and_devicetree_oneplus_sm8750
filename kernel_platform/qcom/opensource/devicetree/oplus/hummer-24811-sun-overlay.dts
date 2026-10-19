@@ -10,6 +10,7 @@
 #include "oplus_chg/oplus-chg-24811.dtsi"
 #include "sensor/hummer-sensor-24811.dtsi"
 #include "oplus_nfc/hummer_nfc.dtsi"
+#include "mm/hummer-24811-sun-mm.dtsi"
 
 / {
     model = "Qualcomm Technologies, Inc. Sun MTP,hummer";

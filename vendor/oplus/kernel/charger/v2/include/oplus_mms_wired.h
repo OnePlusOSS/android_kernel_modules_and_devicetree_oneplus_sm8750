@@ -160,4 +160,8 @@ int oplus_wired_set_supplementary_power_mos(struct oplus_mms *topic, bool enable
 int oplus_wired_set_dischg_status(bool dischg_en);
 int oplus_set_ovp_forced(bool enable);
 int oplus_set_dpdm_ovp_disable(bool disable);
+int oplus_wired_get_vdm_info(struct oplus_mms *topic, u32 *vdm_data, int *vdm_cnt);
+bool oplus_wired_is_gamepad_active(void);
+int oplus_wired_send_get_sink_cap(void);
+
 #endif /* __OPLUS_MMS_WIRED_H__ */

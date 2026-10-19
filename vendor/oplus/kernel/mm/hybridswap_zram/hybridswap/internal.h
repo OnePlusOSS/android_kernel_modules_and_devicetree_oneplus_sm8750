@@ -7,7 +7,7 @@
 #define HYBRIDSWAP_INTERNAL_H
 
 #include <linux/sched.h>
-#include <linux/zsmalloc.h>
+#include "thp_zsmalloc/zsmalloc.h"
 #include <linux/timer.h>
 #include <linux/device.h>
 #include <linux/memcontrol.h>

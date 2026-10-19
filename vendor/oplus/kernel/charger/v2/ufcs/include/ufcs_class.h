@@ -107,6 +107,7 @@ struct ufcs_dev_ops {
 	int (*baudrate_end_check_config)(struct ufcs_dev *ufcs);
 	int (*irq_event_handler)(struct ufcs_dev *ufcs);
 	int (*retrieve_flags)(struct ufcs_dev *ufcs);
+	int (*reset_dpdm)(struct ufcs_dev *ufcs);
 };
 
 #if IS_ENABLED(CONFIG_OPLUS_UFCS_CLASS)
@@ -139,6 +140,7 @@ int ufcs_intf_get_power_info_ext(struct ufcs_dev *ufcs, u64 *pie, int num);
 bool ufcs_is_test_mode(struct ufcs_dev *ufcs);
 bool ufcs_is_vol_acc_test_mode(struct ufcs_dev *ufcs);
 bool ufcs_handshake_success(struct ufcs_dev *ufcs);
+int ufcs_reset_dpdm(struct ufcs_dev *ufcs);
 
 #else /* CONFIG_OPLUS_UFCS_CLASS */
 
@@ -298,6 +300,12 @@ __maybe_unused
 static inline bool ufcs_handshake_success(struct ufcs_dev *ufcs)
 {
 	return false;
+}
+
+__maybe_unused
+static inline int ufcs_reset_dpdm(struct ufcs_dev *ufcs)
+{
+	return -EINVAL;
 }
 
 #endif /* CONFIG_OPLUS_UFCS_CLASS */

@@ -137,15 +137,18 @@ extern struct device *syna_request_managed_device(void);
  *         Return the value of target bit
  */
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#ifdef MAX
 #undef MAX
-#undef MIN
 #endif
 
 #define MAX(a, b) \
 	({__typeof__(a) _a = (a); \
 	__typeof__(b) _b = (b); \
 	_a > _b ? _a : _b; })
+
+#ifdef MIN
+#undef MIN
+#endif
 
 #define MIN(a, b) \
 	({__typeof__(a) _a = (a); \

@@ -66,7 +66,7 @@ static struct wired_disconnect_detection *g_wdd;
 #define CHECK_MAX_TIME_MS		2000
 #define HW_DETECT_CHECK_TIME_MS		50
 #define HW_DETECT_CHECK_COUNT		3
-#define DISCONNECT_TIME_THR_MS		1500
+#define DISCONNECT_TIME_THR_MS		2000
 
 static void wdd_state_reset(struct wired_disconnect_detection *wdd)
 {

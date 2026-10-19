@@ -232,6 +232,10 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{HINGE_DETECT_FOLD_HALL_DATA_LOST_ID, "device_hinge_detect_fold_hall_data_lost_id", SENSOR_DEVICE_TYPE},
 	{HINGE_DETECT_MAIN_ACCEL_INIT_FAIL_ID, "device_hinge_detect_main_accel_init_fail_id", SENSOR_DEVICE_TYPE},
 	{HINGE_DETECT_MAIN_ACCEL_DATA_LOST_ID, "device_hinge_detect_main_accel_data_lost_id", SENSOR_DEVICE_TYPE},
+	{HINGE_DETECT_MAIN_GYRO_INIT_FAIL_ID, "device_hinge_detect_main_gyro_init_fail_id", SENSOR_DEVICE_TYPE},
+	{HINGE_DETECT_MAIN_GYRO_DATA_LOST_ID, "device_hinge_detect_main_gyro_data_lost_id", SENSOR_DEVICE_TYPE},
+	{HINGE_DETECT_SUB_GYRO_INIT_FAIL_ID, "device_hinge_detect_sub_gyro_init_fail_id", SENSOR_DEVICE_TYPE},
+	{HINGE_DETECT_SUB_GYRO_DATA_LOST_ID, "device_hinge_detect_sub_gyro_data_lost_id", SENSOR_DEVICE_TYPE},
 
 	{FREE_FALL_TRIGGER_ID, "device_free_fall", SENSOR_DEVICE_TYPE},
 

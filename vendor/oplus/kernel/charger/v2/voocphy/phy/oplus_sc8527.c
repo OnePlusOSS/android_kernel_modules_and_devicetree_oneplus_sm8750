@@ -88,6 +88,7 @@ struct sc8527_device {
 	u8 ufcs_reg_dump[SC8527_FLAG_NUM];
 	struct work_struct check_reg_work;
 	struct work_struct power_on_mode_switch_work;
+	struct delayed_work cp_uvp_enable_work;
 
 	struct oplus_mms *wired_topic;
 	struct mms_subscribe *wired_subs;
@@ -742,13 +743,64 @@ static int sc8527_get_chg_enable(struct oplus_voocphy_manager *chip, u8 *data)
 	return ret;
 }
 
-static int sc8527_set_chg_enable(struct oplus_voocphy_manager *chip, bool enable)
+static int sc8527_set_uvp_disable(struct oplus_voocphy_manager *chip, bool disable)
 {
 	int ret = 0;
 
 	if (!chip) {
 		chg_err("chip is null\n");
 		return -1;
+	}
+
+	ret = sc8527_update_bits(chip->client, SC8527_REG_3A,
+				 SC8527_VAC2V2X_UVP_ENABLE_MASK,
+				 disable ? SC8527_VAC2V2X_UVP_DISABLE :
+					   SC8527_VAC2V2X_UVP_ENABLE);
+	if (ret < 0) {
+		chg_err("set reg_0x3a bit6 failed(%d)\n", ret);
+		return ret;
+	}
+
+	return ret;
+}
+
+static void sc8527_cp_uvp_enable_work_func(struct work_struct *work)
+{
+	struct sc8527_device *dev =
+		container_of(work, struct sc8527_device, cp_uvp_enable_work.work);
+	int ret;
+
+	if (!dev || !dev->voocphy) {
+		chg_err("chip or voocphy is null\n");
+		return;
+	}
+
+	ret = sc8527_set_uvp_disable(dev->voocphy, false);
+	if (ret < 0)
+		chg_err("enable uvp failed(%d)\n", ret);
+}
+
+static int sc8527_set_chg_enable(struct oplus_voocphy_manager *chip, bool enable)
+{
+	struct sc8527_device *dev;
+	int ret = 0;
+
+	if (!chip) {
+		chg_err("chip is null\n");
+		return -1;
+	}
+
+	dev = chip->priv_data;
+	if (dev == NULL) {
+		chg_err("sc8527 device is NULL\n");
+		return -ENODEV;
+	}
+
+	cancel_delayed_work_sync(&dev->cp_uvp_enable_work);
+	if (enable) {
+		ret = sc8527_set_uvp_disable(chip, true);
+		if (ret < 0)
+			return ret;
 	}
 
 	/* vac range disable */
@@ -763,6 +815,8 @@ static int sc8527_set_chg_enable(struct oplus_voocphy_manager *chip, bool enable
 		chg_err("failed to set chg enable(%d)\n", ret);
 		return ret;
 	}
+	if (enable)
+		schedule_delayed_work(&dev->cp_uvp_enable_work, msecs_to_jiffies(1000));
 
 	chg_err("%s\n", enable ? "enable" : "false");
 
@@ -941,6 +995,7 @@ static int sc8527_reset_voocphy(struct oplus_voocphy_manager *chip)
 		chg_err("sc8527 chip is NULL\n");
 		return -ENODEV;
 	}
+	cancel_delayed_work_sync(&dev->cp_uvp_enable_work);
 	/* turn off mos */
 	sc8527_write_byte(chip->priv_data, SC8527_REG_02, 0x78);
 	/* clear tx data */
@@ -1013,6 +1068,10 @@ static int sc8527_init_vooc(struct oplus_voocphy_manager *chip)
 	sc8527_write_byte(chip->priv_data, SC8527_REG_24, 0x02); /* reset voocphy */
 	sc8527_write_word(chip->client, SC8527_REG_2A, 0x00); /* reset predata 00 */
 	msleep(1);
+	if (oplus_chg_get_fcs_support_flags()) {
+		sc8527_write_byte(chip->priv_data, SC8527_REG_20, 0x31);
+		msleep(30);
+	}
 	sc8527_write_byte(chip->priv_data, SC8527_REG_20, 0x21); /* VOOC_CTRL:disable,no handshake */
 	sc8527_write_byte(chip->priv_data, SC8527_REG_21, 0x80); /* VOOC_CTRL:disable,no handshake */
 	sc8527_write_byte(chip->priv_data, SC8527_REG_2C, 0xD1); /* VOOC_CTRL:disable,no handshake */
@@ -2108,6 +2167,78 @@ static int sc8527_ufcs_cp_watchdog_config(struct ufcs_dev *ufcs, unsigned int ti
 	return 0;
 }
 
+#define SC8527_DP_20K_PD_EN_MASK BIT(4)
+#define SC8527_DM_20K_PD_EN_MASK BIT(5)
+static int sc8527_cp_reset_dpdm(struct ufcs_dev *ufcs)
+{
+	struct sc8527_device *chip = ufcs->drv_data;
+	int rc = 0;
+	int ufcs_disable_rc = 0;
+	static bool first = true;
+	u8 value = 0;
+	bool ufcs_enable_success = false;
+
+	if (!first && !oplus_chg_get_fcs_support_flags())
+		return 0;
+	first = false;
+
+	if (chip == NULL) {
+		chg_err("sc8527 chip is NULL\n");
+		return -ENODEV;
+	}
+
+	rc = sc8527_read_byte(chip, SC8527_ADDR_UFCS_CTRL1, &value);
+	if (rc < 0) {
+		chg_err("[%s] read SC8527_ADDR_UFCS_CTRL1 error, rc=%d\n",
+			chip->dev->of_node->name, rc);
+		goto reset_dpdm_err;
+	}
+
+	if (!(value & SC8527_CMD_EN_CHIP)) {
+		rc = sc8527_ufcs_enable(chip->ufcs);
+		if (rc < 0) {
+			chg_err("sc8527_ufcs_enable failed, rc=%d\n", rc);
+			goto reset_dpdm_err;
+		}
+		ufcs_enable_success = true;
+	}
+
+	rc = sc8527_read_byte(chip, SC8527_REG_20, &value);
+	if (rc < 0) {
+		chg_err("[%s] read SC8527_REG_20 error, rc=%d\n", chip->dev->of_node->name, rc);
+		goto reset_dpdm_err;
+	}
+
+	rc = sc8527_write_byte(chip, SC8527_REG_20,
+		value | (SC8527_DP_20K_PD_EN_MASK | SC8527_DM_20K_PD_EN_MASK));
+	if(rc < 0) {
+		chg_err("dpdm pull down failed, rc=%d\n", rc);
+		goto reset_dpdm_err;
+	}
+	chg_info("dpdm pull down\n");
+
+	msleep(30);
+
+	rc = sc8527_write_byte(chip, SC8527_REG_20,
+		value & ~(SC8527_DP_20K_PD_EN_MASK | SC8527_DM_20K_PD_EN_MASK));
+	if(rc < 0) {
+		chg_err("dpdm pull up failed, rc=%d\n", rc);
+		goto reset_dpdm_err;
+	}
+	chg_info("dpdm pull up\n");
+
+reset_dpdm_err:
+	if (ufcs_enable_success) {
+		ufcs_disable_rc = sc8527_ufcs_disable(chip->ufcs);
+		if (ufcs_disable_rc < 0)
+			chg_err("sc8527_ufcs_disable failed, ufcs_disable_rc=%d\n",
+				ufcs_disable_rc);
+		if (rc >= 0)
+			rc = ufcs_disable_rc;
+	}
+
+	return rc;
+}
 
 static struct ufcs_dev_ops ufcs_ops = {
 	.init = sc8527_ufcs_init,
@@ -2120,6 +2251,7 @@ static struct ufcs_dev_ops ufcs_ops = {
 	.enable = sc8527_ufcs_enable,
 	.disable = sc8527_ufcs_disable,
 	.watchdog_config = sc8527_ufcs_cp_watchdog_config,
+	.reset_dpdm = sc8527_cp_reset_dpdm,
 };
 
 
@@ -3159,6 +3291,7 @@ static int sc8527_charger_probe(struct i2c_client *client,
 	mutex_init(&chip->chip_lock);
 	INIT_WORK(&chip->check_reg_work, sc8527_check_register_work);
 	INIT_WORK(&chip->power_on_mode_switch_work, sc8527_power_on_mode_switch_work);
+	INIT_DELAYED_WORK(&chip->cp_uvp_enable_work, sc8527_cp_uvp_enable_work_func);
 	i2c_set_clientdata(client, voocphy);
 
 	sc8527_create_device_node(&(client->dev));
@@ -3289,6 +3422,8 @@ static void sc8527_charger_remove(struct i2c_client *client)
 
 	chip = voocphy->priv_data;
 	chg_info("enter\n");
+
+	cancel_delayed_work_sync(&chip->cp_uvp_enable_work);
 
 	sc8527_release_chip_resources(chip);
 	sc8527_release_irq_resources(voocphy);

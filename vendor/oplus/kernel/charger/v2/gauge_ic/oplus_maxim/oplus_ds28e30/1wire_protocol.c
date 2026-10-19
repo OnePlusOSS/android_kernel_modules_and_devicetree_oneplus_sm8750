@@ -205,7 +205,7 @@ unsigned char read_bit(void)
 		chg_info("%s: vamm=%d, read bit low time tRL=%ld, read bit end sample time=%ld\n", __func__, vamm, r_diff_ns_1, r_diff_ns);
 #endif
 		/* set threshold to justify logic '1' or '0' */
-		if (vamm > 5)
+		if (vamm > 6)
 			vamm = 1;
 		else
 			vamm = 0;

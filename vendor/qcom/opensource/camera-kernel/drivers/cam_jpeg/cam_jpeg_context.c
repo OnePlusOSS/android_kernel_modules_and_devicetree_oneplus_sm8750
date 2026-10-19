@@ -96,6 +96,10 @@ static int __cam_jpeg_ctx_release_dev_in_acquired(struct cam_context *ctx,
 {
 	int rc;
 
+	if (ctx->state != CAM_CTX_ACQUIRED)
+		CAM_WARN(CAM_JPEG, "%s release dev in invalid state",
+			ctx->ctx_id_string);
+
 	cam_common_release_evt_params(ctx->dev_hdl);
 
 	rc = cam_context_release_dev_to_hw(ctx, cmd);
@@ -181,6 +185,22 @@ static int __cam_jpeg_ctx_handle_hw_event(void *ctx,
 	return rc;
 }
 
+static int __cam_jpeg_ctx_start_dev_in_acquired(struct cam_context *ctx,
+	struct cam_start_stop_dev_cmd *cmd)
+{
+	int rc;
+
+	rc = cam_context_stop_dev_to_hw(ctx);
+	if (rc) {
+		CAM_ERR(CAM_JPEG, "Failed in Stop dev, rc=%d", rc);
+		return rc;
+	} else {
+		ctx->state = CAM_CTX_READY;
+	}
+
+	return rc;
+}
+
 static int __cam_jpeg_ctx_stop_dev_in_acquired(struct cam_context *ctx,
 	struct cam_start_stop_dev_cmd *cmd)
 {
@@ -190,6 +210,8 @@ static int __cam_jpeg_ctx_stop_dev_in_acquired(struct cam_context *ctx,
 	if (rc) {
 		CAM_ERR(CAM_JPEG, "Failed in Stop dev, rc=%d", rc);
 		return rc;
+	} else {
+		ctx->state = CAM_CTX_ACQUIRED;
 	}
 
 	return rc;
@@ -324,6 +346,7 @@ static struct cam_ctx_ops
 		.ioctl_ops = {
 			.release_dev = __cam_jpeg_ctx_release_dev_in_acquired,
 			.config_dev = __cam_jpeg_ctx_config_dev_in_acquired,
+			.start_dev = __cam_jpeg_ctx_start_dev_in_acquired,
 			.stop_dev = __cam_jpeg_ctx_stop_dev_in_acquired,
 			.flush_dev = __cam_jpeg_ctx_flush_dev_in_acquired,
 			.dump_dev = __cam_jpeg_ctx_dump_dev_in_acquired,
@@ -336,7 +359,19 @@ static struct cam_ctx_ops
 	},
 	/* Ready */
 	{
-		.ioctl_ops = {},
+		.ioctl_ops = {
+			.release_dev = __cam_jpeg_ctx_release_dev_in_acquired,
+			.config_dev = __cam_jpeg_ctx_config_dev_in_acquired,
+			.start_dev = __cam_jpeg_ctx_start_dev_in_acquired,
+			.stop_dev = __cam_jpeg_ctx_stop_dev_in_acquired,
+			.flush_dev = __cam_jpeg_ctx_flush_dev_in_acquired,
+			.dump_dev = __cam_jpeg_ctx_dump_dev_in_acquired,
+		},
+		.crm_ops = { },
+		.irq_ops = __cam_jpeg_ctx_handle_hw_event,
+		.pagefault_ops = cam_jpeg_context_dump_active_request,
+		.mini_dump_ops = cam_jpeg_context_mini_dump,
+		.evt_inject_ops = cam_jpeg_context_inject_evt,
 	},
 	/* Flushed */
 	{

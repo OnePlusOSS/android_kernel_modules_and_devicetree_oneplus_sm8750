@@ -124,7 +124,7 @@ static bool oplus_maxim_check_auth_msg(void)
 static int oplus_maxim_parse_dt(struct oplus_maxim_gauge_chip *chip)
 {
 	int rc, len, i, j;
-	struct device_node *node = chip->dev->of_node;
+	struct device_node *node = oplus_get_node_by_child_gauge(chip->dev->of_node);
 	unsigned char sn_num_total[MAX_SN_NUM_SIZE] = {0};
 
 	chip->maxim_in_kernel_init_ok = false;

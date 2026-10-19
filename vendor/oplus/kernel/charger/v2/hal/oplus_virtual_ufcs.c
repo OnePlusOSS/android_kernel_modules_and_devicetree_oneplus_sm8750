@@ -355,6 +355,22 @@ static int oplus_chg_ufcs_is_vol_acc_test_mode(struct oplus_chg_ic_dev *ic_dev, 
 	return 0;
 }
 
+static int oplus_chg_ufcs_reset_dpdm(struct oplus_chg_ic_dev *ic_dev)
+{
+	struct oplus_virtual_ufcs_ic *chip;
+	int rc;
+
+	if (ic_dev == NULL) {
+		chg_err("oplus_chg_ic_dev is NULL");
+		return -ENODEV;
+	}
+	chip = oplus_chg_ic_get_drvdata(ic_dev);
+
+	rc = ufcs_reset_dpdm(chip->ufcs);
+
+	return rc;
+}
+
 static int oplus_chg_ufcs_get_power_info_ext(
 	struct oplus_chg_ic_dev *ic_dev, u64 *info, int num)
 {
@@ -470,6 +486,10 @@ static void *oplus_chg_ufcs_get_func(struct oplus_chg_ic_dev *ic_dev, enum oplus
 	case OPLUS_IC_FUNC_UFCS_IS_VOL_ACC_TEST_MODE:
 		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_UFCS_IS_VOL_ACC_TEST_MODE,
 			oplus_chg_ufcs_is_vol_acc_test_mode);
+		break;
+	case OPLUS_IC_FUNC_UFCS_RESET_DPDM:
+		func = OPLUS_CHG_IC_FUNC_CHECK(OPLUS_IC_FUNC_UFCS_RESET_DPDM,
+			oplus_chg_ufcs_reset_dpdm);
 		break;
 	default:
 		chg_err("this func(=%d) is not supported\n", func_id);

@@ -10,6 +10,7 @@
 #include "tp/pagani-oplus-tp-24821.dtsi"
 #include "oplus_chg/oplus-chg-24875.dtsi"
 #include "sensor/pagani-sensor-24821-24875.dtsi"
+#include "mm/pagani-24875-sun-mm.dtsi"
 
 / {
     model = "Qualcomm Technologies, Inc. Sun MTP,pagani";

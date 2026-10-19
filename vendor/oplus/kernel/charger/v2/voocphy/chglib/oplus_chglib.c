@@ -93,6 +93,33 @@ int oplus_chglib_suspend_charger(bool suspend)
         return rc;
 }
 
+int oplus_chglib_set_fcs_icl(int icl_ma)
+{
+	struct votable *icl_votable;
+	int rc = 0;
+
+	if (!oplus_chg_get_fcs_support_flags())
+		return rc;
+
+	icl_votable = find_votable("WIRED_ICL");
+	if (!icl_votable) {
+		chg_err("WIRED_ICL votable not found\n");
+		return -EINVAL;
+	}
+
+	if (icl_ma > 0)
+		rc = vote(icl_votable, FCS_ICL_VOTER, true, icl_ma, false);
+	else
+		rc = vote(icl_votable, FCS_ICL_VOTER, false, 0, false);
+
+	if (rc < 0)
+		chg_err("set icl error: icl_ma = %d, rc = %d\n", icl_ma, rc);
+	else
+		chg_info("real icl = %d\n", icl_ma);
+
+	return rc;
+}
+
 int oplus_chglib_vooc_fastchg_disable(const char *client_str, bool disable)
 {
 	struct votable *vooc_disable_votable;

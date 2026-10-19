@@ -206,6 +206,14 @@ static inline int pd_handle_tcp_event_bist_cm2(struct pd_port *pd_port)
 	return TCP_DPM_RET_SENT;
 }
 
+static inline int pd_handle_tcp_event_source_cap(struct pd_port *pd_port)
+{
+	if (pd_port->pe_state_curr != PE_SRC_READY)
+		return TCP_DPM_RET_DENIED_NOT_READY;
+	PE_TRANSIT_STATE(pd_port, PE_SRC_SEND_CAPABILITIES);
+	return TCP_DPM_RET_SENT;
+}
+
 #ifdef CONFIG_USB_PD_REV30
 
 #ifdef CONFIG_USB_PD_REV30_SRC_CAP_EXT_REMOTE
@@ -301,17 +309,23 @@ static inline int pd_handle_tcp_event_error_recovery(struct pd_port *pd_port)
 	return TCP_DPM_RET_SENT;
 }
 
+static inline bool pd_validate_rev30_event(struct pd_port *pd_port,
+                                       struct pd_event *pd_event)
+{
+	if (pd_event->msg >= TCP_DPM_EVT_PD30_COMMAND &&
+		pd_event->msg < TCP_DPM_EVT_VDM_COMMAND)
+		return pd_check_rev30(pd_port);
+	return true;
+}
+
 static inline int pd_handle_tcp_dpm_event(
 	struct pd_port *pd_port, struct pd_event *pd_event)
 {
 	int ret = TCP_DPM_RET_DENIED_UNKNOWN;
 
 #ifdef CONFIG_USB_PD_REV30
-	if (pd_event->msg >= TCP_DPM_EVT_PD30_COMMAND
-		&& pd_event->msg < TCP_DPM_EVT_VDM_COMMAND) {
-		if (!pd_check_rev30(pd_port))
-			return TCP_DPM_RET_DENIED_PD_REV;
-	}
+	if (!pd_validate_rev30_event(pd_port, pd_event))
+		return TCP_DPM_RET_DENIED_PD_REV;
 #endif	/* CONFIG_USB_PD_REV30 */
 
 	switch (pd_event->msg) {
@@ -362,6 +376,10 @@ static inline int pd_handle_tcp_dpm_event(
 
 	case TCP_DPM_EVT_GET_SINK_CAP:
 		ret =  pd_handle_tcp_event_get_sink_cap(pd_port);
+		break;
+
+	case TCP_DPM_EVT_SOURCE_CAP:
+		ret = pd_handle_tcp_event_source_cap(pd_port);
 		break;
 
 #ifdef CONFIG_USB_PD_PE_SINK

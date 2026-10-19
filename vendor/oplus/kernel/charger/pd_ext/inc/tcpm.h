@@ -656,6 +656,7 @@ enum TCP_DPM_EVT_ID {
 	TCP_DPM_EVT_GET_SOURCE_CAP,
 	TCP_DPM_EVT_GET_SINK_CAP,
 
+	TCP_DPM_EVT_SOURCE_CAP,
 	TCP_DPM_EVT_REQUEST,
 	TCP_DPM_EVT_REQUEST_EX,
 	TCP_DPM_EVT_REQUEST_AGAIN,
@@ -1003,6 +1004,7 @@ extern int tcpm_put_tcp_dpm_event(
 
 extern int tcpm_inquire_pd_contract(
 	struct tcpc_device *tcpc, int *mv, int *ma);
+extern int tcpm_check_pd_attached(struct tcpc_device *tcpc);
 extern int tcpm_inquire_cable_inform(
 	struct tcpc_device *tcpc, uint32_t *vdos);
 extern int tcpm_inquire_pd_partner_inform(
@@ -1012,6 +1014,10 @@ extern int tcpm_inquire_pd_partner_svids(
 extern int tcpm_inquire_pd_partner_modes(
 	struct tcpc_device *tcpc, uint16_t svid, struct tcpm_mode_list *list);
 extern int tcpm_inquire_pd_source_cap(
+	struct tcpc_device *tcpc, struct tcpm_power_cap *cap);
+extern int tcpm_inquire_pd_local_source_cap(
+	struct tcpc_device *tcpc, struct tcpm_power_cap *cap);
+extern int tcpm_set_pd_local_source_cap(
 	struct tcpc_device *tcpc, struct tcpm_power_cap *cap);
 extern int tcpm_inquire_pd_sink_cap(
 	struct tcpc_device *tcpc, struct tcpm_power_cap *cap);
@@ -1043,6 +1049,8 @@ extern int tcpm_dpm_pd_soft_reset(struct tcpc_device *tcpc,
 extern int tcpm_dpm_pd_get_source_cap(struct tcpc_device *tcpc,
 	const struct tcp_dpm_event_cb_data *data);
 extern int tcpm_dpm_pd_get_sink_cap(struct tcpc_device *tcpc,
+	const struct tcp_dpm_event_cb_data *data);
+extern int tcpm_dpm_pd_source_cap(struct tcpc_device *tcpc,
 	const struct tcp_dpm_event_cb_data *data);
 extern int tcpm_dpm_pd_request(struct tcpc_device *tcpc,
 	int mv, int ma, const struct tcp_dpm_event_cb_data *data);

@@ -27,6 +27,7 @@
 #include "hbp_power.h"
 extern void hbp_power_ctrl(struct hbp_device *hbp_dev, struct power_sequeue sq[]);
 extern void hbp_power_type_ctrl(struct hbp_device *hbp_dev, enum power_type type, bool en);
+extern void touch_call_fp_grip(struct hbp_device *hbp_dev, int state);
 
 struct hbp_core *g_hbp;
 struct task_struct *suspend_task = NULL;
@@ -348,15 +349,39 @@ static int hbp_sync_with_daemon(struct hbp_core *hbp, int id, hbp_panel_event ev
 
 void hbp_state_notify(struct hbp_core *hbp, int id, hbp_panel_event event)
 {
+	struct hbp_device *hbp_dev;
+
+	/* Multi-level pointer guard (LOGIC-IF-PTR-CHAIN) */
+	if (!hbp) {
+		hbp_err("hbp is NULL\n");
+		return;
+	}
+	if (id < 0 || id >= MAX_DEVICES) {
+		hbp_err("invalid id %d (MAX_DEVICES=%d)\n", id, MAX_DEVICES);
+		return;
+	}
+	hbp_dev = hbp->devices[id];
+	if (!hbp_dev) {
+		hbp_err("hbp->devices[%d] is NULL\n", id);
+		return;
+	}
+
 	hbp_debug("notify id %d event %d\n", id, event);
 
 	switch (event) {
 	case HBP_PANEL_EVENT_EARLY_SUSPEND:
-		hbp->devices[id]->screenoff_ifp = false;
+		hbp_dev->screenoff_ifp = false;
 		hbp_info("tp_suspend start\n");
 		break;
 	case HBP_PANEL_EVENT_EARLY_RESUME:
 		hbp_info("tp_resume start\n");
+		/* atomic test-and-clear: inject one RELEASE if last fp-grip was HOLD */
+		if (hbp_dev->fp_grip_support &&
+		    atomic_xchg(&hbp_dev->fp_grip_hold, 0)) {
+			hbp_info("last fp grip was HOLD at screen-on, inject RELEASE once\n");
+			touch_call_fp_grip(hbp_dev, 0);
+			hbp_healthinfo_report(&hbp_dev->monitor_data, "finger_hold_in_resume");
+		}
 		break;
 	default:
 		break;

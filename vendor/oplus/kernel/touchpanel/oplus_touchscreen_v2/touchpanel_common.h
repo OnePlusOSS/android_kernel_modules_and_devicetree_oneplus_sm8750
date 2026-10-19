@@ -107,6 +107,7 @@
 #define HEALTH_REPORT_RST_OTHER     "other_rst"
 #define HEALTH_REPORT_GLOVE_ENTER	"glove_enterTimes"
 #define HEALTH_REPORT_FW_FD			"firmware_fd"
+#define HEALTH_REPORT_BASELINE_NEGATIVE  "baseline_negative"
 
 #define FINGERPRINT_DOWN_DETECT 0X0f
 #define FINGERPRINT_UP_DETECT 0X1f
@@ -1140,6 +1141,7 @@ struct touchpanel_data {
 	bool fp_grip_hold;
 	bool idle_freq_support;
 	int  fp_grip_enable;
+	int idle_freq_enable;
 	u8 aiunit_game_get_num;
 	u8 aiunit_game_set_num;
 	int aiunit_game_enable;

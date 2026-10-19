@@ -336,6 +336,28 @@ bool oplus_chg_get_boot_reset_adapter_support_flags(void)
 	return ((boot_reset_adapter_support == 1) ? true : false);
 }
 
+bool oplus_chg_get_fcs_support_flags(void)
+{
+	struct device_node *node;
+	static int fcs_support = -EINVAL;
+
+	if (fcs_support == -EINVAL) {
+		node = of_find_node_by_path("/soc/oplus_chg_core");
+		if (node != NULL) {
+			if (!of_property_read_bool(node, "oplus,fcs_support")) {
+				fcs_support = 0;
+			} else {
+				fcs_support = 1;
+				chg_info("fcs_support = %d\n", fcs_support);
+			}
+		} else {
+			chg_err("not found oplus_chg_core node\n");
+			fcs_support = 0;
+		}
+	}
+	return ((fcs_support == 1) ? true : false);
+}
+
 enum sn_match_type {
 	SN_MATCH_REGION = 0,
 	MAX_MATCH_TYPE,
@@ -455,6 +477,36 @@ out:
 	of_node_put(config_node);
 	return match;
 #endif
+}
+
+struct device_node *oplus_get_node_by_type(struct device_node *father_node)
+{
+	char battery_type_str[OPLUS_BATTERY_TYPE_LEN] = { 0 };
+	struct device_node *sub_node = NULL;
+	struct device_node *node = father_node;
+	int rc = oplus_gauge_get_battery_type_str(battery_type_str);
+	if (rc == 0) {
+		sub_node = of_get_child_by_name(father_node, battery_type_str);
+		if (sub_node)
+			node = sub_node;
+	}
+	return node;
+}
+
+struct device_node *oplus_get_node_by_child_gauge(struct device_node *father_node)
+{
+	struct device_node *node = of_find_node_by_path("/soc/oplus_chg_core");
+	bool use_child = false;
+
+	if (node != NULL) {
+		use_child = of_property_read_bool(node, "oplus,gauge_ic_by_child_node");
+		of_node_put(node);
+	}
+
+	if (!use_child)
+		return father_node;
+
+	return oplus_get_node_by_type(father_node);
 }
 
 #ifdef MODULE

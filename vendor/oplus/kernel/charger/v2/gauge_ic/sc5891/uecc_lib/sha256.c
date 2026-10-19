@@ -94,7 +94,7 @@ static void sha256_transform(struct sha256_ctx_t *s, const uint8_t *buf)
 	s->h[7] += h;
 } /* sha256_transform */
 
-void sha256_init(struct sha256_ctx_t *s)
+static void sha256_init(struct sha256_ctx_t *s)
 {
 	s->len = 0;
 
@@ -116,7 +116,8 @@ void sha256_final(struct sha256_ctx_t *s, uint8_t *md)
 	/* pad */
 	s->buf[r++] = 0x80;
 	if (r > 56) {
-		memset(s->buf + r, 0, SHA256_BLOCKLEN - r);
+		if (r < SHA256_BLOCKLEN)
+			memset(s->buf + r, 0, SHA256_BLOCKLEN - r);
 		r = 0;
 		sha256_transform(s, s->buf);
 	}

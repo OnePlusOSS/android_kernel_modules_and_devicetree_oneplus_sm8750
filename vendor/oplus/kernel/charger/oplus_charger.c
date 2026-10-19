@@ -10414,7 +10414,15 @@ static void oplus_chg_get_battery_data(struct oplus_chg_chip *chip)
 					    "[Battery]oplus_chg_get_battery_data, chip->soc[%d],retry_counts[%d]\n",
 					    chip->soc, retry_counts);
 			retry_counts++;
-			chip->soc = 50;
+			if (!chip->is_gauge_ready && chip->shutdown_uisoc >= 0 &&
+				chip->shutdown_uisoc <= OPLUS_FULL_SOC)
+				chip->soc = chip->shutdown_uisoc;
+			else
+				chip->soc = 50;
+
+			chip->ui_soc = chip->soc;
+			chg_info("is_gauge_ready:%d, shutdown_uisoc:%d, soc:%d, ui_soc:%d\n",
+				chip->is_gauge_ready, chip->shutdown_uisoc, chip->soc, chip->ui_soc);
 			goto next;
 		}
 		chip->is_gauge_ready = true;

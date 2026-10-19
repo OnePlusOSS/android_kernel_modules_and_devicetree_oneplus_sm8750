@@ -133,7 +133,7 @@ void oplus_ddl_check_preempt(struct rq *rq, struct task_struct *p,
 		if (IS_ERR_OR_NULL(ots_p))
 			return;
 
-		if (now - ots_p->runnable_ts >= ddl_p)
+		if (now - ots_p->runnable_ts >= MSEC_TO_NSEC(ddl_p))
 			*preempt = true;
 	}
 }

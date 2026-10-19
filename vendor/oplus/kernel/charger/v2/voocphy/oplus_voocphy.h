@@ -99,7 +99,8 @@ enum {
 	VOOCPHY_BATT_TEMP_COOL,			/* 5 ~ 12 */
 	VOOCPHY_BATT_TEMP_LITTLE_COOL,		/* 12 ~ 16 */
 	VOOCPHY_BATT_TEMP_LITTLE_COOL_HIGH,	/* 16 ~ 20 */
-	VOOCPHY_BATT_TEMP_NORMAL,		/* 20 ~ 35 */
+	VOOCPHY_BATT_TEMP_NORMAL_LOW_PRE,	/* 21 ~ 25 */
+	VOOCPHY_BATT_TEMP_NORMAL,		/* 25 ~ 35 */
 	VOOCPHY_BATT_TEMP_NORMAL_HIGH,		/* 35 ~ 44 */
 	VOOCPHY_BATT_TEMP_WARM,			/* 44 ~ 51 */
 	VOOCPHY_BATT_TEMP_MAX,
@@ -542,7 +543,7 @@ struct batt_sys_curve {
 
 #define BATT_SYS_ROW_MAX        30
 #define BATT_SYS_COL_MAX        7
-#define BATT_SYS_MAX            7
+#define BATT_SYS_MAX            8
 
 #define DUMP_REG_CNT 49
 
@@ -556,6 +557,7 @@ enum {
 	BATT_SYS_CURVE_TEMP_COOL,
 	BATT_SYS_CURVE_TEMP_LITTLE_COOL,
 	BATT_SYS_CURVE_TEMP_LITTLE_COOL_HIGH,
+	BATT_SYS_CURVE_TEMP_NORMAL_LOW_PRE,
 	BATT_SYS_CURVE_TEMP_NORMAL_LOW,
 	BATT_SYS_CURVE_TEMP_NORMAL_HIGH,
 	BATT_SYS_CURVE_TEMP_WARM,
@@ -652,12 +654,14 @@ struct oplus_voocphy_manager {
 	int vooc_little_cool_temp;
 	int vooc_cool_temp;
 	int vooc_little_cold_temp;
+	int vooc_normal_low_pre_temp;
 	int vooc_normal_low_temp;
 	int vooc_normal_high_temp;
 	int vooc_normal_high_temp_default;
 	int vooc_little_cool_temp_default;
 	int vooc_cool_temp_default;
 	int vooc_little_cold_temp_default;
+	int vooc_normal_low_pre_temp_default;
 	int vooc_normal_low_temp_default;
 	int vooc_little_cool_high_temp;
 	int vooc_little_cool_high_temp_default;
@@ -811,6 +815,8 @@ struct oplus_voocphy_manager {
 	struct delayed_work voocphy_send_ongoing_notify;
 	struct delayed_work recovery_system_work;
 	struct delayed_work pcc_work;
+	struct delayed_work voocphy_fcs_work;
+	struct delayed_work set_fcs_icl_work;
 	struct work_struct first_ask_batvol_work;
 	atomic_t  voocphy_freq_state;
 	bool recovery_system_done;
@@ -900,8 +906,6 @@ struct oplus_voocphy_manager {
 	int	disconn_pre_vbat;
 	int	disconn_pre_ibat;
 	int	disconn_pre_vbat_calc;
-	int	voocphy_enable;
-	int	slave_voocphy_enable;
 	int	vbus_adjust_cnt;
 	unsigned int vbat_calc;
 	int ap_handle_timeout_num;
@@ -954,11 +958,14 @@ struct oplus_voocphy_manager {
 
 	bool vbus_adjust_new_method;
 	bool vbus_adjust_done;
+	bool perf_en;
 	bool in_vbus_adjust_trans;
 	u8 vbus_adjust_hold_cnt;
 	u8 last_vooc_vbus_status;
 	struct oplus_chg_strategy *ccd_strategy;
 	bool twice_request_current_enable;
+	bool ufcs_enable;
+	int fcs_icl_ma;
 };
 
 struct oplus_voocphy_operations {
@@ -971,6 +978,7 @@ struct oplus_voocphy_operations {
 	void (*update_data)(struct oplus_voocphy_manager *chip);
 	int (*get_chg_enable)(struct oplus_voocphy_manager *chip, u8 *data);
 	int (*set_chg_enable)(struct oplus_voocphy_manager *chip, bool enable);
+	int (*set_perf_enable)(struct oplus_voocphy_manager *chip, bool enable);
 	int (*get_adc_enable)(struct oplus_voocphy_manager *chip, u8 *data);
 	int (*set_adc_enable)(struct oplus_voocphy_manager *chip, bool enable);
 	int (*set_adc_forcedly_enable)(struct oplus_voocphy_manager *chip, int mode);
@@ -1005,6 +1013,7 @@ struct oplus_voocphy_operations {
 	int (*set_sstimeout_ucp_enable)(struct oplus_voocphy_manager *chip, bool enable);
 	int (*cp_set_vac2v2x_uvp)(struct oplus_voocphy_manager *chip, bool enable);
 	int (*set_usb_dischg_enable)(struct oplus_voocphy_manager *chip, bool enable);
+	int (*set_ufcs_enable)(struct oplus_voocphy_manager *chip, bool enable);
 };
 
 #define VOOCPHY_LOG_BUF_LEN 1024

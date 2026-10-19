@@ -26,6 +26,10 @@ enum {
 	STRATEGY_TEMP_RANGE_T3,
 	STRATEGY_TEMP_RANGE_T4,
 	STRATEGY_TEMP_RANGE_T5,
+	STRATEGY_TEMP_RANGE_T6,
+	STRATEGY_TEMP_RANGE_T7,
+	STRATEGY_TEMP_RANGE_T8,
+	STRATEGY_TEMP_RANGE_T9,
 	STRATEGY_TEMP_RANGE_MAX,
 	STRATEGY_TEMP_RANGE_INVALID = STRATEGY_TEMP_RANGE_MAX
 };
@@ -36,7 +40,11 @@ static const char *const lcf_strategy_temp_range_name[] = {
 	[STRATEGY_TEMP_RANGE_T2] = "strategy_temp_range_t2",
 	[STRATEGY_TEMP_RANGE_T3] = "strategy_temp_range_t3",
 	[STRATEGY_TEMP_RANGE_T4] = "strategy_temp_range_t4",
-	[STRATEGY_TEMP_RANGE_T5] = "strategy_temp_range_t5"
+	[STRATEGY_TEMP_RANGE_T5] = "strategy_temp_range_t5",
+	[STRATEGY_TEMP_RANGE_T6] = "strategy_temp_range_t6",
+	[STRATEGY_TEMP_RANGE_T7] = "strategy_temp_range_t7",
+	[STRATEGY_TEMP_RANGE_T8] = "strategy_temp_range_t8",
+	[STRATEGY_TEMP_RANGE_T9] = "strategy_temp_range_t9"
 };
 
 struct low_curr_full_curve {
@@ -52,6 +60,7 @@ struct low_curr_full_curves_temp_range {
 
 struct low_curr_full_temp_range {
 	int range[STRATEGY_TEMP_RANGE_MAX+1];
+	int range_num;  /* Actual number of temperature thresholds configured */
 	int index;
 	int status;
 };
@@ -246,6 +255,7 @@ static int lcf_get_temp_region(struct lcf_strategy *lcf)
 	int i, temp;
 	int temp_region = STRATEGY_TEMP_RANGE_INVALID;
 	int rc;
+	int temp_range_num = lcf->temp_range.range_num;
 
 	rc = lcf_strategy_get_temp(lcf, &temp);
 	if (rc < 0) {
@@ -253,15 +263,16 @@ static int lcf_get_temp_region(struct lcf_strategy *lcf)
 		return STRATEGY_TEMP_RANGE_INVALID;
 	}
 
-	for (i = 0; i < STRATEGY_TEMP_RANGE_MAX; i++) {
+	for (i = 0; i < temp_range_num - 1; i++) {
 		if ((temp >= lcf->temp_range.range[i]) &&
 		    (temp < lcf->temp_range.range[i+1])) {
 			temp_region = i;
 			break;
 		}
 	}
-	if (i == STRATEGY_TEMP_RANGE_MAX) {
-		chg_err("over max temp range, i=%d\n", i);
+	if (i == temp_range_num - 1) {
+		chg_err("over max temp range, i=%d, temp_range_num=%d\n",
+			i, temp_range_num);
 		return STRATEGY_TEMP_RANGE_INVALID;
 	}
 	return temp_region;
@@ -323,15 +334,29 @@ lcf_strategy_alloc_by_node(struct device_node *node)
 		chg_info("lcf->alarm_offset = %d\n", lcf->alarm_offset);
 	}
 
+	/* Dynamically read temp_range count */
+	rc = of_property_count_elems_of_size(node, "oplus,temp_range", sizeof(s32));
+	if (rc < 0) {
+		chg_err("get oplus,temp_range count error, rc=%d\n", rc);
+		goto base_info_err;
+	}
+	if (rc > STRATEGY_TEMP_RANGE_MAX) {
+		chg_err("oplus,temp_range has %d elements, exceeds max %d\n",
+			rc, STRATEGY_TEMP_RANGE_MAX);
+		rc = -EINVAL;
+		goto base_info_err;
+	}
+	lcf->temp_range.range_num = rc;
+
 	rc = __read_signed_data_from_node(node, "oplus,temp_range",
 					  (s32 *)lcf->temp_range.range,
-					  STRATEGY_TEMP_RANGE_MAX + 1);
+					  lcf->temp_range.range_num);
 	if (rc < 0) {
 		chg_err("get oplus,temp_range property error, rc=%d\n", rc);
 		goto base_info_err;
 	}
-	chg_debug("lcf->temp_range.range: ");
-	for (i = 0; i < STRATEGY_TEMP_RANGE_MAX + 1; i++)
+	chg_debug("lcf->temp_range.range_num=%d, range: ", lcf->temp_range.range_num);
+	for (i = 0; i < lcf->temp_range.range_num; i++)
 		chg_debug("%d ", lcf->temp_range.range[i]);
 
 	curves_node = of_get_child_by_name(node, "strategy_temp_range_curves");
@@ -341,7 +366,8 @@ lcf_strategy_alloc_by_node(struct device_node *node)
 		goto base_info_err;
 	}
 
-	for (i = 0; i < STRATEGY_TEMP_RANGE_MAX; i++) {
+	/* Only parse curves for configured temperature ranges */
+	for (i = 0; i < lcf->temp_range.range_num - 1; i++) {
 		rc = of_property_count_elems_of_size(curves_node, lcf_strategy_temp_range_name[i], sizeof(u32));
 		if (rc < 0) {
 			chg_err("Count lcf_strategy_temp_range_name %s failed, rc=%d\n",
@@ -372,7 +398,7 @@ base_info_err:
 
 #if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
 #define LCF_CURVES_DATA_SIZE	sizeof(struct low_curr_full_curve)
-#define TMP_BUF_SIZE 		10
+#define TMP_BUF_SIZE 		(STRATEGY_TEMP_RANGE_MAX + 1)
 static struct oplus_chg_strategy *lcf_strategy_alloc_by_param_head(const char *node_name, struct oplus_param_head *head)
 {
 	struct lcf_strategy *lcf;
@@ -398,6 +424,8 @@ static struct oplus_chg_strategy *lcf_strategy_alloc_by_param_head(const char *n
 		chg_err("alloc strategy memory error\n");
 		return ERR_PTR(-ENOMEM);
 	}
+	/* Initialize range_num to 0, will be set when parsing temp_range */
+	lcf->temp_range.range_num = 0;
 	str_buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (str_buf == NULL) {
 		chg_err("alloc str_buf memory error\n");
@@ -438,20 +466,24 @@ static struct oplus_chg_strategy *lcf_strategy_alloc_by_param_head(const char *n
 		goto base_info_err;
 	}
 	data_len = oplus_cfg_get_data_size(data_head);
-	if (data_len / sizeof(buf[0]) != STRATEGY_TEMP_RANGE_MAX + 1) {
+	if (data_len / sizeof(buf[0]) > STRATEGY_TEMP_RANGE_MAX + 1) {
 		rc = -EINVAL;
-		chg_err("configuration data size error, data_len=%ld\n", data_len / sizeof(buf[0]));
+		chg_err("configuration data size error, data_len=%ld exceeds max %d\n",
+			data_len / sizeof(buf[0]), STRATEGY_TEMP_RANGE_MAX + 1);
 		goto base_info_err;
 	}
+	lcf->temp_range.range_num = data_len / sizeof(buf[0]);
 	rc = oplus_cfg_get_data(data_head, (u8 *)buf, data_len);
 	if (rc < 0) {
 		chg_err("get oplus,temp_range data error, rc=%d\n", rc);
 		goto base_info_err;
 	}
-	for (i = 0; i < STRATEGY_TEMP_RANGE_MAX + 1; i++)
+	for (i = 0; i < lcf->temp_range.range_num; i++)
 		lcf->temp_range.range[i] = (uint32_t)(le32_to_cpu(buf[i]));
+	chg_info("oplus,temp_range_num = %d\n", lcf->temp_range.range_num);
 
-	for (i = 0; i < STRATEGY_TEMP_RANGE_MAX; i++) {
+	/* Only parse curves for configured temperature ranges */
+	for (i = 0; i < lcf->temp_range.range_num - 1; i++) {
 		index = snprintf(str_buf, PAGE_SIZE - 1, "%s:strategy_temp_range_curves:%s", node_name, lcf_strategy_temp_range_name[i]);
 		if (index < 0 || index >= PAGE_SIZE) {
 			rc = -EINVAL;
@@ -564,8 +596,9 @@ static int __lcf_strategy_get_data(struct oplus_chg_strategy *strategy, void *re
 
 	update_low_curr_temp_status(lcf);
 	temp_status = lcf->temp_range.status;
-	if (temp_status >= STRATEGY_TEMP_RANGE_MAX) {
-		chg_debug("temp_status is %d, INVALID\n", temp_status);
+	if (temp_status >= lcf->temp_range.range_num - 1) {
+		chg_debug("temp_status is %d, INVALID (max=%d, range_num=%d)\n",
+			  temp_status, STRATEGY_TEMP_RANGE_MAX, lcf->temp_range.range_num);
 		return -EINVAL;
 	}
 	rc = lcf_strategy_get_vbat(lcf, &vbatt);

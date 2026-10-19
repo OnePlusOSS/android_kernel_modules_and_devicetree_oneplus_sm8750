@@ -261,10 +261,9 @@
 
 #define  NAME_MAX_LENS                  256
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
-#undef MIN
-#endif
+#ifndef MIN
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
+#endif
 
 #define DEFAULT_RUN_DELAY_TIME          50
 /*99-1 = 98*/

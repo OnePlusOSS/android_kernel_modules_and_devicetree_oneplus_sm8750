@@ -434,8 +434,22 @@
                     }
                 }
             }
+        },
+        {
+            "lable": "OPLUS_IC_FUNC_UFCS_RESET_DPDM",
+            "desc": {
+                "zh": "重置DPDM"
+            },
+            "auto_debug_code": true,
+            "parameter_list": [],
+            "parameter_desc": [],
+            "vict": {
+                "read": false,
+                "write": false,
+                "overwrite": false
+            }
         }
     ],
 
-    "version": "V1.1:17:84c9311f8f9c2834f4134f3c138c710ec8581b04df64a5932803cf0baac4a548"
+    "version": "V1.2:18:2421fc1c4c0a3b54a74e84ebaf131582b72ee76bd1098ea4562911dde90caae5"
 }

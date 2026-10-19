@@ -62,6 +62,7 @@
 #include <linux/fs.h>
 #include <linux/local_lock.h>
 #include "zsmalloc.h"
+#include <linux/minmax.h>
 
 #define ZSPAGE_MAGIC	0x58
 
@@ -119,6 +120,10 @@
 #define CLASS_BITS	8
 #define ISOLATED_BITS	5
 #define MAGIC_VAL_BITS	8
+
+#ifdef MAX
+#undef MAX
+#endif
 
 #define MAX(a, b) ((a) >= (b) ? (a) : (b))
 
@@ -1159,7 +1164,7 @@ static bool zspage_empty(struct zspage *zspage)
  * Return: the index of the zsmalloc &size_class that hold objects of the
  * provided size.
  */
-unsigned int zs_lookup_class_index(struct zs_pool *pool, unsigned int size)
+unsigned int zs_lookup_class_index_oplus(struct zs_pool *pool, unsigned int size)
 {
 	struct size_class *class;
 
@@ -1167,7 +1172,7 @@ unsigned int zs_lookup_class_index(struct zs_pool *pool, unsigned int size)
 
 	return class->index;
 }
-EXPORT_SYMBOL_GPL(zs_lookup_class_index);
+EXPORT_SYMBOL_GPL(zs_lookup_class_index_oplus);
 
 unsigned long zs_get_total_pages_oplus(struct zs_pool *pool)
 {

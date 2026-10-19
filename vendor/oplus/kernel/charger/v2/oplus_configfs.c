@@ -571,6 +571,31 @@ static ssize_t power_role_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(power_role);
 
+#define VDM_INFO_MAX	5
+static ssize_t vdm_info_show(struct device *dev,
+			     struct device_attribute *attr, char *buf)
+{
+	struct oplus_configfs_device *chip = dev->driver_data;
+	u32 vdm_info[VDM_INFO_MAX] = {0};
+	int vdm_cnt = VDM_INFO_MAX;
+	ssize_t count = 0;
+	int rc;
+	int i;
+
+	rc = oplus_wired_get_vdm_info(chip->wired_topic, vdm_info, &vdm_cnt);
+	chg_info("vdm_info: rc=%d, vdm_cnt=%d\n", rc, vdm_cnt);
+	/* vdm_info[0] is protocol header, skip it */
+	if (rc < 0 || vdm_cnt <= 1)
+		return scnprintf(buf, PAGE_SIZE, "\n");
+	for (i = 1; i < vdm_cnt; i++) {
+		count += scnprintf(buf + count, PAGE_SIZE, "0x%08x ", vdm_info[i]);
+	}
+	count += scnprintf(buf + count, PAGE_SIZE, "\n");
+	chg_info("vdm_info: %s\n", buf);
+	return count;
+}
+static DEVICE_ATTR_RO(vdm_info);
+
 static ssize_t otg_online_show(struct device *dev,
 			       struct device_attribute *attr, char *buf)
 {
@@ -676,6 +701,7 @@ static struct device_attribute *oplus_usb_attributes[] = {
 	&dev_attr_usbtemp_volt_r,
 	&dev_attr_reverse_chg_type,
 	&dev_attr_power_role,
+	&dev_attr_vdm_info,
 	NULL
 };
 

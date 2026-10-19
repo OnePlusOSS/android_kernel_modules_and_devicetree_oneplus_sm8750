@@ -392,6 +392,7 @@ static bool oplus_get_vooc_normal_temp_status(struct oplus_dual_chan_chip *chip)
 
 	oplus_mms_get_item_data(chip->vooc_topic, VOOC_ITEM_TEMP_RANGE, &data, true);
 	if (data.intval == FASTCHG_TEMP_RANGE_NORMAL_HIGH ||
+	    data.intval == FASTCHG_TEMP_RANGE_NORMAL_LOW_PRE ||
 	    data.intval == FASTCHG_TEMP_RANGE_NORMAL_LOW)
 		return true;
 	else

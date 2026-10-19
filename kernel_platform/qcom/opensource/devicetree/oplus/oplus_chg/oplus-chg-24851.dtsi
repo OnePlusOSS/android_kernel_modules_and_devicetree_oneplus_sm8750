@@ -435,6 +435,9 @@
 					OPLUS_IC_FUNC_BUCK_GET_USB_AICL_ENHANCE
 					OPLUS_IC_FUNC_BUCK_SET_AICL_POINT
 					OPLUS_IC_FUNC_BUCK_ITEM_CHECK
+					OPLUS_IC_FUNC_GET_SOURCE_PDO
+					OPLUS_IC_FUNC_BUCK_GET_VDM_INFO
+					OPLUS_IC_FUNC_BUCK_SEND_GET_SINK_CAP
 				>;
 				virqs = <
 					OPLUS_IC_VIRQ_ERR
@@ -445,6 +448,7 @@
 					OPLUS_IC_VIRQ_CHG_TYPE_CHANGE
 					OPLUS_IC_VIRQ_OTG_ENABLE
 					OPLUS_IC_VIRQ_SVID
+					OPLUS_IC_VIRQ_POWER_CHANGED
 				>;
 			};
 		};
@@ -660,7 +664,7 @@
 		oplus_spec,dec-vol-fv-full-mv = <0 20 40 40 60 60>;
 		oplus_spec,batt-them-thr = <(-100) 0 50 120 160 350 450 530>;
 		oplus_spec,iterm-ma = <200>;
-		oplus_spec,fv-mv = <4520 4520 4520 4520 4520 4520 4500 4130 4130>;
+		oplus_spec,fv-mv = <4530 4530 4530 4530 4530 4530 4510 4130 4130>;
 		oplus_spec,sw-fv-mv = <4470 4470 4470 4470 4470 4470 4450 4080 4080>;
 		oplus_spec,hw-fv-inc-mv = <0 18 18 18 18 18 18 18 0>;
 		oplus_spec,sw-over-fv-mv = <4528 4528 4528 4528 4528 4528 4508 4138 4138>;

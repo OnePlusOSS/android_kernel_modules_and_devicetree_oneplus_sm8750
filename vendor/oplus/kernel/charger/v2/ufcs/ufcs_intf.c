@@ -1368,3 +1368,24 @@ bool ufcs_handshake_success(struct ufcs_dev *ufcs)
 	return class->handshake_success;
 }
 EXPORT_SYMBOL(ufcs_handshake_success);
+
+int ufcs_reset_dpdm(struct ufcs_dev *ufcs)
+{
+	int rc;
+	struct ufcs_class *class;
+
+	if (ufcs == NULL) {
+		ufcs_err("ufcs is NULL\n");
+		return -EINVAL;
+	}
+	class = ufcs->class;
+
+	if (ufcs->ops->reset_dpdm == NULL) {
+		ufcs_err("not support reset dpdm\n");
+		return -ENOTSUPP;
+	}
+	ufcs_info("reset dpdm\n");
+	rc = ufcs->ops->reset_dpdm(ufcs);
+	return rc;
+}
+EXPORT_SYMBOL(ufcs_reset_dpdm);

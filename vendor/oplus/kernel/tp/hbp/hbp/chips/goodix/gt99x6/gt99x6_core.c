@@ -156,6 +156,18 @@ u16 checksum16_cmp(u8 *data, u32 size, int mode)
 		return cal_checksum == checksum ? 0 : 1;
 }
 
+void gt_hw_power_off(struct gt_core *gt)
+{
+    hbp_dev_power_type_ctrl(gt, POWER_RESET, false);
+    msleep(POWER_OFF_RESET_DELAY_MS);
+    hbp_dev_power_type_ctrl(gt, POWER_AVDD, false);
+    msleep(POWER_OFF_AVDD_DELAY_MS);
+    hbp_dev_power_type_ctrl(gt, POWER_VDDI, false);
+    msleep(POWER_OFF_VDDI_DELAY_MS);
+    hbp_dev_power_type_ctrl(gt, POWER_BUS, false);
+    msleep(POWER_OFF_BUS_DELAY_MS);
+}
+
 static int gt_chip_enable_hbp_mode(void *priv, bool en)
 {
 	return 0;
@@ -713,6 +725,20 @@ static int gt_dev_remove(struct platform_device *pdev)
 #endif
 }
 
+static void gt_dev_shutdown(struct platform_device *pdev)
+{
+	struct gt_core *gt = platform_get_drvdata(pdev);
+
+	if (!gt) {
+		hbp_err("gt_dev_shutdown: gt is null\n");
+		return;
+	}
+
+	hbp_info("gt99x6 shutdown start\n");
+	gt_hw_power_off(gt);
+	hbp_info("gt99x6 shutdown end\n");
+}
+
 static const struct of_device_id gt_dt_match[] = {
 	{.compatible = "goodix,gt9916", },
 	{.compatible = "goodix,gt9966", },
@@ -724,6 +750,7 @@ static const struct of_device_id gt_dt_match[] = {
 static struct platform_driver gt_dev_driver = {
 	.probe = gt_dev_probe,
 	.remove = gt_dev_remove,
+	.shutdown = gt_dev_shutdown,
 	.driver = {
 		.name = PLATFORM_DRIVER_NAME,
 		.owner = THIS_MODULE,

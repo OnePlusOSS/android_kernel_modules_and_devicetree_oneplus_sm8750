@@ -12,18 +12,18 @@
 #include <trace/events/task.h>
 
 #define REGISTER_TRACE_VH(vender_hook, handler) \
-{ \
-	ret = register_trace_##vender_hook(handler, NULL); \
-	if (ret) { \
-		ux_err("failed to register_trace_"#vender_hook", ret=%d\n", ret); \
-		return ret; \
-	} \
-}
+	{ \
+		ret = register_trace_##vender_hook(handler, NULL); \
+		if (ret) { \
+			ux_err("failed to register_trace_"#vender_hook", ret=%d\n", ret); \
+			return ret; \
+		} \
+	}
 
 #define UNREGISTER_TRACE_VH(vender_hook, handler) \
-{ \
-	unregister_trace_##vender_hook(handler, NULL); \
-}
+	{ \
+		unregister_trace_##vender_hook(handler, NULL); \
+	}
 
 #define REGISTER_TRACE_RVH		REGISTER_TRACE_VH
 

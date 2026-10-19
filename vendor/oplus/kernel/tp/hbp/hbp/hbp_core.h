@@ -3,6 +3,9 @@
 
 #include <linux/irqreturn.h>
 #include <linux/firmware.h>
+#include <linux/hrtimer.h>
+#include <linux/workqueue.h>
+#include <linux/atomic.h>
 
 #include "hbp_report.h"
 #include "hbp_notify.h"
@@ -330,7 +333,7 @@ struct hbp_device {
 	struct clk *pen_ck;
 	/* edge grip for fingerprint */
 	bool fp_grip_support;
-	bool fp_grip_hold;
+	atomic_t fp_grip_hold; /* shared by IRQ writer and resume reader, use atomic to avoid TOCTOU */
 	int fp_grip_enable;
 };
 

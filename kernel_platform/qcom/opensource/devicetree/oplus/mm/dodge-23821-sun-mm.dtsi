@@ -7,11 +7,17 @@
         bind-cma = "qseecom_ta_region";
         size-range = <0xe00000 0x1000000>;
       };
+      oplus_bsp_frr {
+        feature-enable;
+      };
     };
     ram-12g {
       ta_cma_rsv {
         bind-cma = "qseecom_ta_region";
         size-range = <0xe00000 0x1000000>;
+      };
+      oplus_bsp_frr {
+        feature-enable;
       };
     };
     ram-16g {
@@ -19,11 +25,17 @@
         bind-cma = "qseecom_ta_region";
         size-range = <0xe00000 0x1000000>;
       };
+      oplus_bsp_frr {
+        feature-enable;
+      };
     };
     ram-24g {
       ta_cma_rsv {
         bind-cma = "qseecom_ta_region";
         size-range = <0xe00000 0x1000000>;
+      };
+      oplus_bsp_frr {
+        feature-enable;
       };
     };
   };

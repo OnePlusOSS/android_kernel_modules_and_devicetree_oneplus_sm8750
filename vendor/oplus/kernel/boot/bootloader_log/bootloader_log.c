@@ -226,5 +226,5 @@ static void __exit bootloader_log_exit(void)
 module_exit(bootloader_log_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("software@oneplus.cn>");
+MODULE_AUTHOR("software");
 

@@ -343,6 +343,17 @@ static void sc8547a_awake_init(struct sc8547a_device *chip)
 	chip->chip_ws = wakeup_source_register(chip->dev, "sc8547a_ws");
 }
 
+static void sc8547a_awake_deinit(struct sc8547a_device *chip)
+{
+	if (!chip || !chip->chip_ws) {
+		chg_err("chip is NULL\n");
+		return;
+	}
+
+	wakeup_source_unregister(chip->chip_ws);
+	chip->chip_ws = NULL;
+}
+
 __maybe_unused static void sc8547a_set_awake(struct sc8547a_device *chip, bool awake)
 {
 	static bool pm_flag = false;
@@ -1706,7 +1717,19 @@ static int sc8547a_ufcs_cp_watchdog_config(struct ufcs_dev *ufcs, unsigned int t
 
 static void sc8547_create_device_node(struct device *dev)
 {
-	device_create_file(dev, &dev_attr_registers);
+	int ret;
+	ret = device_create_file(dev, &dev_attr_registers);
+	if (ret && ret != -EEXIST)
+		chg_err("create registers node failed, rc=%d\n", ret);
+}
+
+static void sc8547_remove_device_node(struct device *dev)
+{
+	if (!dev) {
+		chg_err("device is NULL\n");
+		return;
+	}
+	device_remove_file(dev, &dev_attr_registers);
 }
 
 static struct oplus_voocphy_operations oplus_sc8547_ops = {
@@ -2935,6 +2958,12 @@ static int sc8547a_parse_dt(struct sc8547a_device *chip)
 		chip->vooc_vbus_ovp_reg = 0x50; /* VBUS_OVP 10V */
 	chg_err("vooc_vbus_ovp_reg=0x%02x\n", chip->vooc_vbus_ovp_reg);
 
+	chip->use_vooc_phy = of_property_read_bool(chip->dev->of_node, "oplus,use_vooc_phy");
+	chip->use_ufcs_phy = of_property_read_bool(chip->dev->of_node, "oplus,use_ufcs_phy");
+	chip->vac_support = of_property_read_bool(chip->dev->of_node, "oplus,vac_support");
+	chg_info("use_vooc_phy=%d, use_ufcs_phy=%d, vac_support=%d\n",
+		 chip->use_vooc_phy, chip->use_ufcs_phy, chip->vac_support);
+
 	return 0;
 }
 
@@ -2985,20 +3014,13 @@ static int sc8547a_driver_probe(struct i2c_client *client,
 		goto regmap_init_err;
 	}
 	sc8547a_awake_init(chip);
+	sc8547_create_device_node(&(client->dev));
 
 	rc = sc8547_charger_choose(chip);
 	if (rc <= 0) {
 		chg_err("choose error, rc=%d\n", rc);
-		goto regmap_init_err;
+		goto reg_voocphy_err;
 	}
-
-	sc8547_create_device_node(&(client->dev));
-
-	chip->use_vooc_phy = of_property_read_bool(chip->dev->of_node, "oplus,use_vooc_phy");
-	chip->use_ufcs_phy = of_property_read_bool(chip->dev->of_node, "oplus,use_ufcs_phy");
-	chip->vac_support = of_property_read_bool(chip->dev->of_node, "oplus,vac_support");
-	chg_info("use_vooc_phy=%d, use_ufcs_phy=%d, vac_support=%d\n",
-		 chip->use_vooc_phy, chip->use_ufcs_phy, chip->vac_support);
 
 	sc8547a_hw_version_check(chip);
 	if (chip->use_vooc_phy) {
@@ -3061,6 +3083,8 @@ irq_reg_err:
 		ufcs_device_unregister(chip->ufcs);
 reg_ufcs_err:
 reg_voocphy_err:
+	sc8547_remove_device_node(&(client->dev));
+	sc8547a_awake_deinit(chip);
 regmap_init_err:
 parse_dt_err:
 	i2c_set_clientdata(client, NULL);

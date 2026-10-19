@@ -63,6 +63,7 @@
 #include <linux/fs.h>
 #include "chp_ext.h"
 #include <linux/local_lock.h>
+#include <linux/minmax.h>
 
 #define ZSPAGE_MAGIC	0x58
 
@@ -131,7 +132,12 @@
 #define ISOLATED_BITS	3
 #define MAGIC_VAL_BITS	8
 
+#ifdef MAX
+#undef MAX
+#endif
+
 #define MAX(a, b) ((a) >= (b) ? (a) : (b))
+
 /* ZS_MIN_ALLOC_SIZE must be multiple of ZS_ALIGN */
 #define ZS_MIN_ALLOC_SIZE \
 	MAX(32, (ZS_MAX_PAGES_PER_ZSPAGE << CONT_PTE_SHIFT >> OBJ_INDEX_BITS))

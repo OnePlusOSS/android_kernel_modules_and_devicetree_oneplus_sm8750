@@ -3352,6 +3352,7 @@ int oplus_ofp_aod_off_handle(void *dsi_display)
 			display->panel->oplus_panel.aod_backlight_async = false;
 		} else {
 			dsi_panel_set_backlight(display->panel, display->panel->bl_config.bl_level);
+			oplus_panel_backlight_notifier(display->panel, (u32)display->panel->bl_config.bl_level);
 		}
 	}
 	mutex_unlock(&display->panel->panel_lock);

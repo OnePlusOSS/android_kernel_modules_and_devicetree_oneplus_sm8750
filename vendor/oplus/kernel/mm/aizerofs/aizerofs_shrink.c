@@ -742,6 +742,7 @@ static void io_work(struct work_struct *work)
 	struct aizerofs_dma_buf_cache *dbuf_cache = container_of(work, struct aizerofs_dma_buf_cache,
 			io_worker);
 	int ret;
+	const struct cred *cred;
 	const struct cred *old_cred;
 
 	/* everything is still in memory */
@@ -752,12 +753,14 @@ static void io_work(struct work_struct *work)
 		return;
 	}
 
-	if (!dbuf_cache->cred) {
+	/* Use READ_ONCE to ensure we get a consistent value */
+	cred = READ_ONCE(dbuf_cache->cred);
+	if (!cred) {
 		pr_err("cred is NULL\n");
 		return;
 	}
 
-	old_cred = override_creds(dbuf_cache->cred);
+	old_cred = override_creds(cred);
 	pr_info("override_dbuf_cache_creds\n");
 
 	bin_file = filp_open_dup(dbuf_cache->bin_path, O_RDONLY | O_DIRECT, 0);
@@ -1119,9 +1122,13 @@ struct aizerofs_dma_buf_cache *find_or_create_dbuf_cache(unsigned long *len)
 		}
 
 		aizerofs_handle_put_param_idx(param_idx);
+		/* Flush any pending io_work before updating cred to avoid use-after-free */
+		flush_work(&dbuf_cache->io_worker);
+		spin_lock(&dbuf_cache->lock);
 		if (dbuf_cache->cred)
 			put_cred(dbuf_cache->cred);
 		dbuf_cache->cred = prepare_kernel_cred(current);
+		spin_unlock(&dbuf_cache->lock);
 		schedule_work(&dbuf_cache->io_worker);
 	}
 

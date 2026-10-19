@@ -75,6 +75,7 @@
 #define FTS_FW_INFO                             0x96
 #define FTS_REG_TEMPERATURE                     0x97
 #define FTS_REG_PALM_TO_SLEEP_STATUS            0x9B
+#define FTS_REG_INJECT_WDT_RESET                0xB6
 #define FTS_REG_FREQUENCE_WATER_MODE			0xBF
 #define FTS_REG_SET_FP_ERROR_REPORT             0xBF /* bit7 */
 #define FTS_REG_GESTURE_OUTPUT_ADDRESS          0xD3
@@ -84,6 +85,7 @@
 #define FTS_REG_SAMSUNG_SPECIFAL                0xFA
 #define FTS_REG_HEALTH_1                        0xFD
 #define FTS_REG_HEALTH_2                        0xFE
+#define FTS_REG_HEALTH_BASELINE                 0x03
 #define FTS_REG_GLOVE_MODE_SWITCH               0xC0
 #define FTS_REG_GLOVE_MODE_STATE                0x01
 #define FTS_REG_EDGE_LIMIT_SWITCH               0xCE
@@ -232,6 +234,9 @@
 #define FTS_720HZ_GAME_MODE                     0x03
 #define INTELLIGENT_GAME_MODE                   11
 #define EXTREME_GAME_MODE                       12
+
+#define FTS_POINTER_BUFFER_LEN                  150
+#define FTS_EDG_BUFFER_LEN                      200
 enum _FTS_RST_REASON {
 	FTS_RST_REASON_UNKNOWN  = 0,
 	FTS_RST_REASON_FWUPDATE = 0x01,
@@ -323,6 +328,15 @@ enum FOD_HEALTH_INFO {
 	FOD_DETECT_EFFETIVE_AREA 	= 0x22,
 	FOD_DETECT_ID_REPORRE    	= 0x30,
 };
+
+enum DEBUG_INFO {
+	RESET_TYPE		= 84,
+	DOWN_THD		= 85,
+	UP_THD			= 86,
+	IDLE_THD		= 87,
+	MAX_DIFF_H8		= 88,
+	MAX_DIFF_L8		= 89,
+};
 struct fts_aod_info {
 	u8 gesture_id;
 	u8 point_num;
@@ -379,6 +393,8 @@ struct chip_data_ft3683g {
 	int *scap_rawdata;
 	int *rawdata_linearity;
 	int tp_index;
+	int print_count;
+	int print_count_glove;
 	int *node_valid;
 	int *node_valid_sc;
 	int gesture_state;
@@ -430,6 +446,7 @@ struct chip_data_ft3683g {
 	bool charger_connected;
 	fod_trigger_type fod_trigger;
 	bool water_mode;
+	u8 last_waterlevel; /* last rain level for health report; init 0xFF */
 	int extreme_game_report_rate;
 	bool extreme_game_flag;
 	bool fingerprint_error_report_support;              /*fingerprint error report support*/

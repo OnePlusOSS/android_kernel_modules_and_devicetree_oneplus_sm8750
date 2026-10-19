@@ -645,13 +645,14 @@ static void hbp_gesture_report(struct hbp_device *hbp_dev, struct gesture_info *
 		}
 
 		if (hbp_dev->fp_grip_support) {
+			/* fp_grip_hold shared with resume-side atomic_xchg, must use atomic ops */
 			if (gesture->type == FP_GESTURE_HOLD) {
-				hbp_dev->fp_grip_hold = true;
-				hbp_info("FP_GESTURE_HOLD:%d\n", hbp_dev->fp_grip_hold);
+				atomic_set(&hbp_dev->fp_grip_hold, 1);
+				hbp_info("FP_GESTURE_HOLD:%d\n", atomic_read(&hbp_dev->fp_grip_hold));
 				touch_call_fp_grip(hbp_dev, 1);
 			} else if (gesture->type == FP_GESTURE_RELEASE) {
-				hbp_dev->fp_grip_hold = false;
-				hbp_info("FP_GESTURE_RELEASE:%d\n", hbp_dev->fp_grip_hold);
+				atomic_set(&hbp_dev->fp_grip_hold, 0);
+				hbp_info("FP_GESTURE_RELEASE:%d\n", atomic_read(&hbp_dev->fp_grip_hold));
 				touch_call_fp_grip(hbp_dev, 0);
 			}
 		}

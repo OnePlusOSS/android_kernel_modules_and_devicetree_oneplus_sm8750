@@ -2588,7 +2588,7 @@ static inline int typec_handle_vbus_absent(struct tcpc_device *tcpc)
 	ret = tcpci_get_cc(tcpc);
 	if (ret < 0)
 		return ret;
-	
+
 	if (!typec_is_cc_no_res() && tcpc->typec_state <= typec_unattached_src)
 		tcpc_typec_handle_cc_change(tcpc);
 

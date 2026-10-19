@@ -154,6 +154,8 @@ static void init_record_process_names(void) {
 		"ndroid.settings",
 		"ndroid.launcher",
 		"[GT]ColdPool#",
+		"aidu.input_oppo",
+		"method.sogouoem",
 	};
 
 	for (i = 0; i < ARRAY_SIZE(process_names); i++) {

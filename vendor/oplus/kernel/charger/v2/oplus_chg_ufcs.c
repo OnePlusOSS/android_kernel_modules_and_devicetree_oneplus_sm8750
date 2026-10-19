@@ -60,6 +60,9 @@
 #define UFCS_START_DEF_CURR_MA_OPLUS	800
 #define UFCS_START_DEF_CURR_MA_THIRD	1000
 
+#define UFCS_START_DEF_CURR_MA		2000
+#define UFCS_START_CP_CURR_MA		1000
+
 #define UFCS_WAIT_CURR_DOWN_TIMES	200
 #define UFCS_QUIT_CP_OVER_CURR		4000
 
@@ -124,6 +127,7 @@ enum {
 	UFCS_BAT_TEMP_LITTLE_COOL,
 	UFCS_BAT_TEMP_LITTLE_COOL_HIGH,
 	UFCS_BAT_TEMP_COOL,
+	UFCS_BAT_TEMP_NORMAL_LOW_PRE,
 	UFCS_BAT_TEMP_NORMAL_LOW,
 	UFCS_BAT_TEMP_NORMAL_HIGH,
 	UFCS_BAT_TEMP_LITTLE_COLD,
@@ -138,6 +142,7 @@ enum {
 	UFCS_TEMP_RANGE_COOL, /* 5 ~ 12 */
 	UFCS_TEMP_RANGE_LITTLE_COOL, /* 12~20 */
 	UFCS_TEMP_RANGE_LITTLE_COOL_HIGH,
+	UFCS_TEMP_RANGE_NORMAL_LOW_PRE,
 	UFCS_TEMP_RANGE_NORMAL_LOW, /* 20~35 */
 	UFCS_TEMP_RANGE_NORMAL_HIGH, /* 35~44 */
 	UFCS_TEMP_RANGE_WARM, /* 44-52 */
@@ -277,6 +282,7 @@ struct oplus_ufcs_limits {
 	int default_ufcs_little_cool_high_temp;
 	int default_ufcs_cool_temp;
 	int default_ufcs_little_cold_temp;
+	int default_ufcs_normal_low_pre_temp;
 	int default_ufcs_normal_low_temp;
 	int ufcs_warm_allow_vol;
 	int ufcs_warm_allow_soc;
@@ -286,6 +292,7 @@ struct oplus_ufcs_limits {
 	int ufcs_cool_temp;
 	int ufcs_little_cool_temp;
 	int ufcs_little_cool_high_temp;
+	int ufcs_normal_low_pre_temp;
 	int ufcs_normal_low_temp;
 	int ufcs_normal_high_temp;
 	int ufcs_batt_over_high_temp;
@@ -369,7 +376,6 @@ struct ufcs_bcc_info {
 	int bcc_exit_curr;
 };
 
-#define UFCS_PR_START_CURR_MA		1000
 #define UFCS_PR_START_DELAY_MS		200
 enum ufcs_pr_state {
 	UFCS_PR_IDLE,
@@ -516,6 +522,7 @@ struct oplus_ufcs {
 	struct work_struct cp_err_handler_work;
 	struct work_struct cp_online_handler_work;
 	struct work_struct cp_offline_handler_work;
+	struct work_struct set_fcs_icl_work;
 
 	wait_queue_head_t read_wq;
 	struct miscdevice misc_dev;
@@ -2093,6 +2100,21 @@ static int oplus_ufcs_cp_reg_dump(struct oplus_ufcs *chip)
 	return rc;
 }
 
+__maybe_unused
+static int oplus_ufcs_reset_dpdm(struct oplus_ufcs *chip)
+{
+	int rc;
+
+	if (chip->ufcs_ic == NULL) {
+		chg_err("ufcs_ic is NULL\n");
+		return -ENODEV;
+	}
+
+	rc = oplus_chg_ic_func(chip->ufcs_ic, OPLUS_IC_FUNC_UFCS_RESET_DPDM);
+
+	return rc;
+}
+
 static void oplus_ufcs_deep_ratio_limit_curr(struct oplus_ufcs *chip)
 {
 	union mms_msg_data data = { 0 };
@@ -2391,9 +2413,13 @@ static int oplus_ufcs_temp_cur_range_init(struct oplus_ufcs *chip)
 		chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_LITTLE_COOL;
 		chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_LITTLE_COOL;
 	} else if (chip->limits.ufcs_little_cool_high_temp != -EINVAL &&
-	    vbat_temp_cur < chip->limits.ufcs_little_cool_high_temp) {
+		vbat_temp_cur < chip->limits.ufcs_little_cool_high_temp) {
 		chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_LITTLE_COOL_HIGH;
 		chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_LITTLE_COOL_HIGH;
+	} else if (chip->limits.ufcs_normal_low_pre_temp != -EINVAL &&
+		vbat_temp_cur < chip->limits.ufcs_normal_low_pre_temp) {
+		chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW_PRE;
+		chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW_PRE;
 	} else if (vbat_temp_cur < chip->limits.ufcs_normal_low_temp) { /*20-35C*/
 		chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW;
 		chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW;
@@ -2427,6 +2453,54 @@ static void oplus_ufcs_variables_early_init(struct oplus_ufcs *chip)
 	chip->subsys_reset_ufcs = false;
 }
 
+#define UFCS_FCS_ICL1_MA	1500
+#define UFCS_FCS_ICL2_MA	800
+static int oplus_ufcs_set_fcs_icl_vote(int icl_ma)
+{
+	struct votable *icl_votable;
+	int rc = 0;
+
+	if (!oplus_chg_get_fcs_support_flags())
+		return rc;
+
+	icl_votable = find_votable("WIRED_ICL");
+	if (!icl_votable) {
+		chg_err("WIRED_ICL votable not found\n");
+		return -EINVAL;
+	}
+	if (icl_ma > 0)
+		rc = vote(icl_votable, FCS_ICL_VOTER, true, icl_ma, false);
+	else
+		rc = vote(icl_votable, FCS_ICL_VOTER, false, 0, false);
+	if (rc < 0)
+		chg_err("set icl error: icl_ma = %d, rc = %d\n", icl_ma, rc);
+	else
+		chg_info("real icl = %d\n", icl_ma);
+
+	return rc;
+}
+
+static void oplus_ufcs_set_fcs_icl_work(struct work_struct *work)
+{
+	oplus_ufcs_set_fcs_icl_vote(0);
+}
+
+static void oplus_ufcs_clear_fcs_icl(struct oplus_ufcs *chip)
+{
+	if (!chip)
+		return;
+
+	/*
+	 * DESIGN REQUIREMENT: this must stay asynchronous.
+	 *
+	 * Do NOT replace with flush_work()/cancel_work_sync() in exit/reset paths.
+	 * Waiting for WIRED_ICL vote completion can be blocked by
+	 * COMMON_POWER_CHECK/AICL lock hold and significantly increase protocol
+	 * handover latency (UFCS->SVOOC), which violates the timing target.
+	 */
+	schedule_work(&chip->set_fcs_icl_work);
+}
+
 static void oplus_ufcs_variables_init(struct oplus_ufcs *chip)
 {
 	chip->timer.fastchg_timer = oplus_current_kernel_time();
@@ -2454,6 +2528,8 @@ static void oplus_ufcs_variables_init(struct oplus_ufcs *chip)
 	chip->batt_alarm = 0;
 	chip->last_target_curr_ma = chip->target_curr_ma;
 	chip->allow_check_soc = chip->ui_soc;
+	/* Keep async clear to avoid blocking init/transition path on ICL lock. */
+	oplus_ufcs_clear_fcs_icl(chip);
 }
 
 static void oplus_ufcs_force_exit(struct oplus_ufcs *chip)
@@ -2471,6 +2547,15 @@ static void oplus_ufcs_force_exit(struct oplus_ufcs *chip)
 	chip->startup_retry_times = 0;
 	chip->emark_imax = 0;
 	chip->power_imax = 0;
+	/*
+	 * Keep ICL clear asynchronous here to avoid exit-path blocking on
+	 * WIRED_ICL vote/AICL lock contention (e.g. COMMON_POWER_CHECK voter),
+	 * which can noticeably delay UFCS->SVOOC handover.
+	 * Residual FCS_ICL_VOTER (if any) is expected to be overridden by the
+	 * next protocol initialization path (for example SVOOC re-initialization).
+	 * DO NOT add flush_work()/cancel_work_sync() here.
+	 */
+	oplus_ufcs_clear_fcs_icl(chip);
 	oplus_ufcs_push_emark_power(chip, UFCS_POWER(chip->config.target_vbus_mv, 0));
 	oplus_ufcs_push_adapter_power(chip, UFCS_POWER(chip->config.target_vbus_mv, 0));
 	chip->curr_cc = 0;
@@ -2510,6 +2595,14 @@ static void oplus_ufcs_soft_exit(struct oplus_ufcs *chip)
 	chip->handshake_ok = false;
 	chip->curr_cc = 0;
 	msleep(UFCS_STOP_DELAY_TIME);
+	/*
+	 * Same rationale as force_exit(): keep this non-blocking to avoid extra
+	 * exit latency from synchronous WIRED_ICL vote lock wait.
+	 * Residual FCS_ICL_VOTER (if any) is expected to be overridden by the
+	 * next protocol initialization path (for example SVOOC re-initialization).
+	 * DO NOT add flush_work()/cancel_work_sync() here.
+	 */
+	oplus_ufcs_clear_fcs_icl(chip);
 	oplus_ufcs_config_cp_watchdog(chip, UFCS_CP_WATCHDOG_DISABLE);
 	oplus_ufcs_cp_enable(chip, false);
 	oplus_ufcs_cp_adc_enable(chip, false);
@@ -2860,17 +2953,6 @@ static void oplus_ufcs_sub_btb_connnect_check(struct oplus_ufcs *chip)
 	}
 }
 
-static int oplus_ufcs_get_start_curr_min(struct oplus_ufcs *chip)
-{
-	if (chip->pr_config.support_pr)
-		return UFCS_PR_START_CURR_MA;
-
-	if (chip->oplus_ufcs_adapter)
-		return UFCS_START_DEF_CURR_MA_OPLUS;
-	else
-		return UFCS_START_DEF_CURR_MA_THIRD;
-}
-
 static bool oplus_ufcs_check_ufcs_continue(struct oplus_ufcs *chip)
 {
 	if (chip->config.curr_max_ma <= UFCS_VERIFY_CURR_THR_MA && !chip->retention_topic) {
@@ -2961,6 +3043,7 @@ static void oplus_ufcs_switch_check_work(struct work_struct *work)
 	}
 
 	oplus_ufcs_switch_to_ufcs(chip);
+	oplus_ufcs_reset_dpdm(chip);
 	rc = oplus_ufcs_handshake(chip);
 	if (rc < 0) {
 		chg_err("ufcs handshake error\n");
@@ -3135,13 +3218,19 @@ static void oplus_ufcs_switch_check_work(struct work_struct *work)
 		return;
 	}
 
-	if (is_wired_suspend_votable_available(chip))
-		vote(chip->wired_suspend_votable, UFCS_VOTER, true, 1, false);
+	if (oplus_chg_get_fcs_support_flags()) {
+		if (is_disable_charger_vatable_available(chip))
+			vote(chip->chg_disable_votable, UFCS_VOTER, true, 1, false);
+		oplus_ufcs_set_fcs_icl_vote(UFCS_FCS_ICL1_MA);
+	} else {
+		if (is_wired_suspend_votable_available(chip))
+			vote(chip->wired_suspend_votable, UFCS_VOTER, true, 1, false);
+	}
 
 	pdo_vol = UFCS_OUTPUT_MODE_VOL_MIN(chip->pdo[0]) > UFCS_START_DEF_VOL_MV ?
 		  UFCS_OUTPUT_MODE_VOL_MIN(chip->pdo[0]) : UFCS_START_DEF_VOL_MV;
 	pdo_vol = pdo_vol > UFCS_START_MAX_VOL_MV ? UFCS_START_MAX_VOL_MV : pdo_vol;
-	rc = oplus_ufcs_pdo_set(chip, pdo_vol, oplus_ufcs_get_start_curr_min(chip));
+	rc = oplus_ufcs_pdo_set(chip, pdo_vol, UFCS_START_DEF_CURR_MA);
 	if (rc < 0) {
 		chg_err("pdo set error, rc=%d\n", rc);
 		goto err;
@@ -3261,6 +3350,8 @@ static int oplus_ufcs_charge_start(struct oplus_ufcs *chip)
 				chg_err("can't get cp work status, rc=%d\n", rc);
 			} else {
 				if (work_start) {
+					if (oplus_chg_get_fcs_support_flags() && is_wired_suspend_votable_available(chip))
+						vote(chip->wired_suspend_votable, UFCS_VOTER, true, 1, false);
 					rc = oplus_ufcs_temp_cur_range_init(chip);
 					if (rc < 0)
 						return rc;
@@ -3306,7 +3397,7 @@ static int oplus_ufcs_charge_start(struct oplus_ufcs *chip)
 						chip->target_vbus_mv = chip->config.target_vbus_mv;
 					else
 						chip->target_vbus_mv = chip->vol_set_mv;
-					rc = oplus_ufcs_pdo_set(chip, chip->target_vbus_mv, oplus_ufcs_get_start_curr_min(chip));
+					rc = oplus_ufcs_pdo_set(chip, chip->target_vbus_mv, UFCS_START_CP_CURR_MA);
 					if (rc < 0) {
 						chg_err("pdo set error, rc=%d\n", rc);
 						return rc;
@@ -3359,6 +3450,14 @@ static int oplus_ufcs_charge_start(struct oplus_ufcs *chip)
 			}
 			oplus_ufcs_cp_adc_enable(chip, true);
 			goto update_vol;
+		}
+		if (oplus_chg_get_fcs_support_flags()) {
+			oplus_ufcs_set_fcs_icl_vote(UFCS_FCS_ICL2_MA);
+			rc = oplus_ufcs_pdo_set(chip, chip->vol_set_mv, UFCS_START_CP_CURR_MA);
+			if (rc < 0) {
+				chg_err("pdo set error, rc=%d\n", rc);
+				return rc;
+			}
 		}
 		rc = oplus_ufcs_cp_enable(chip, true);
 		if (rc < 0 && (rc != -ENOTSUPP)) {
@@ -3419,12 +3518,12 @@ update_vol:
 	chg_info("cp_vin=%d, target_vbus=%d, update_size=%d, req_vol=%d\n",
 		 cp_vin, target_vbus, update_size, req_vol);
 
-	rc = oplus_ufcs_cp_set_iin(chip, oplus_ufcs_get_start_curr_min(chip));
+	rc = oplus_ufcs_cp_set_iin(chip, UFCS_START_DEF_CURR_MA);
 	if (rc < 0) {
 		chg_err("set cp input current error, rc=%d\n", rc);
 		return rc;
 	}
-	rc = oplus_ufcs_pdo_set(chip, req_vol, oplus_ufcs_get_start_curr_min(chip));
+	rc = oplus_ufcs_pdo_set(chip, req_vol, UFCS_START_DEF_CURR_MA);
 	if (rc < 0) {
 		chg_err("pdo set error, rc=%d\n", rc);
 		return rc;
@@ -3449,6 +3548,8 @@ static void oplus_ufcs_reset_temp_range(struct oplus_ufcs *chip)
 	chip->limits.ufcs_little_cool_temp =
 		chip->limits.default_ufcs_little_cool_temp;
 	chip->limits.ufcs_little_cool_high_temp = chip->limits.default_ufcs_little_cool_high_temp;
+	chip->limits.ufcs_normal_low_pre_temp =
+		chip->limits.default_ufcs_normal_low_pre_temp;
 	chip->limits.ufcs_normal_low_temp =
 		chip->limits.default_ufcs_normal_low_temp;
 }
@@ -3688,6 +3789,8 @@ oplus_ufcs_set_current_temp_low_normal_range(struct oplus_ufcs *chip,
 
 	if (chip->limits.ufcs_little_cool_high_temp != -EINVAL)
 		start_temp = chip->limits.ufcs_little_cool_high_temp;
+	if (chip->limits.ufcs_normal_low_pre_temp != -EINVAL)
+		start_temp = chip->limits.ufcs_normal_low_pre_temp;
 
 	if (vbat_temp_cur < chip->limits.ufcs_normal_low_temp &&
 	    vbat_temp_cur >= start_temp) { /* 20C<=T<35C */
@@ -3703,7 +3806,13 @@ oplus_ufcs_set_current_temp_low_normal_range(struct oplus_ufcs *chip,
 			ret = chip->limits.ufcs_strategy_normal_current;
 			chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_HIGH;
 		} else {
-			if (chip->limits.ufcs_little_cool_high_temp != -EINVAL) {
+			if (chip->limits.ufcs_normal_low_pre_temp != -EINVAL) {
+				chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW_PRE;
+				chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW_PRE;
+				ret = chip->limits.ufcs_strategy_normal_current;
+				oplus_ufcs_reset_temp_range(chip);
+				chip->limits.ufcs_normal_low_pre_temp += UFCS_TEMP_LOW_RANGE_THD;
+			} else if (chip->limits.ufcs_little_cool_high_temp != -EINVAL) {
 				chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_LITTLE_COOL_HIGH;
 				chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_LITTLE_COOL_HIGH;
 				ret = chip->limits.ufcs_strategy_normal_current;
@@ -3716,6 +3825,55 @@ oplus_ufcs_set_current_temp_low_normal_range(struct oplus_ufcs *chip,
 				oplus_ufcs_reset_temp_range(chip);
 				chip->limits.ufcs_little_cool_temp += UFCS_TEMP_LOW_RANGE_THD;
 			}
+		}
+	}
+
+	return ret;
+}
+
+static int oplus_ufcs_set_current_temp_normal_low_pre_range(struct oplus_ufcs *chip, int vbat_temp_cur)
+{
+	int ret = 0;
+	int start_temp = chip->limits.ufcs_little_cool_high_temp;
+
+	if (chip->limits.ufcs_little_cool_high_temp == -EINVAL)
+		start_temp = chip->limits.ufcs_little_cool_temp;
+
+	if (vbat_temp_cur < chip->limits.ufcs_normal_low_pre_temp &&
+	    vbat_temp_cur >= start_temp) {
+		chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW_PRE;
+		ret = chip->limits.ufcs_strategy_normal_current;
+		chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW_PRE;
+	} else if (vbat_temp_cur >= chip->limits.ufcs_normal_low_pre_temp) {
+		if (chip->ui_soc <= chip->high_soc) {
+			chip->limits.ufcs_strategy_change_count++;
+			if (chip->limits.ufcs_strategy_change_count >= UFCS_TEMP_OVER_COUNTS) {
+				chip->limits.ufcs_strategy_change_count = 0;
+				chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_SWITCH_CURVE;
+				chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_INIT;
+				(void)oplus_chg_strategy_init(chip->strategy);
+				chg_err("switch temp range:%d", vbat_temp_cur);
+			}
+		} else {
+			chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW;
+			chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW;
+		}
+		ret = chip->limits.ufcs_strategy_normal_current;
+		oplus_ufcs_reset_temp_range(chip);
+		chip->limits.ufcs_normal_low_pre_temp -= UFCS_TEMP_LOW_RANGE_THD;
+	} else {
+		if (chip->limits.ufcs_little_cool_high_temp != -EINVAL) {
+			chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_LITTLE_COOL_HIGH;
+			chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_LITTLE_COOL_HIGH;
+			ret = chip->limits.ufcs_strategy_normal_current;
+			oplus_ufcs_reset_temp_range(chip);
+			chip->limits.ufcs_little_cool_high_temp += UFCS_TEMP_LOW_RANGE_THD;
+		} else {
+			chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_LITTLE_COOL;
+			chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_LITTLE_COOL;
+			ret = chip->limits.ufcs_strategy_normal_current;
+			oplus_ufcs_reset_temp_range(chip);
+			chip->limits.ufcs_little_cool_temp += UFCS_TEMP_LOW_RANGE_THD;
 		}
 	}
 
@@ -3742,8 +3900,14 @@ static int oplus_ufcs_set_current_temp_little_cool_high_range(struct oplus_ufcs 
 				chg_err("switch temp range:%d", vbat_temp_cur);
 			}
 		} else {
-			chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW;
-			chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW;
+			if (chip->limits.ufcs_normal_low_pre_temp != -EINVAL &&
+			    vbat_temp_cur < chip->limits.ufcs_normal_low_pre_temp) {
+				chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW_PRE;
+				chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW_PRE;
+			} else {
+				chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW;
+				chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW;
+			}
 		}
 		ret = chip->limits.ufcs_strategy_normal_current;
 		oplus_ufcs_reset_temp_range(chip);
@@ -3790,9 +3954,14 @@ oplus_ufcs_set_current_temp_little_cool_range(struct oplus_ufcs *chip,
 			chip->limits.ufcs_little_cool_temp -= UFCS_TEMP_LOW_RANGE_THD;
 		} else {
 			chip->limits.ufcs_little_cool_temp -= UFCS_TEMP_LOW_RANGE_THD;
-			chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW;
+			if (chip->limits.ufcs_normal_low_pre_temp != -EINVAL) {
+				chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW_PRE;
+				chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW_PRE;
+			} else {
+				chip->ufcs_fastchg_batt_temp_status = UFCS_BAT_TEMP_NORMAL_LOW;
+				chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW;
+			}
 			ret = chip->limits.ufcs_strategy_normal_current;
-			chip->ufcs_temp_cur_range = UFCS_TEMP_RANGE_NORMAL_LOW;
 		}
 	} else {
 		if (chip->ui_soc <= chip->high_soc) {
@@ -3949,6 +4118,10 @@ static int oplus_ufcs_get_batt_temp_curr(struct oplus_ufcs *chip)
 		break;
 	case UFCS_TEMP_RANGE_LITTLE_COOL_HIGH:
 		ret = oplus_ufcs_set_current_temp_little_cool_high_range(
+			chip, vbat_temp_cur);
+		break;
+	case UFCS_TEMP_RANGE_NORMAL_LOW_PRE:
+		ret = oplus_ufcs_set_current_temp_normal_low_pre_range(
 			chip, vbat_temp_cur);
 		break;
 	case UFCS_TEMP_RANGE_COOL:
@@ -4935,7 +5108,7 @@ static int oplus_ufcs_set_fcl_curr(struct oplus_ufcs *chip)
 		fcl_limit = ROUND_DOWN(fcl_limit, 50);
 		if (fcl_limit)
 			vote(chip->ufcs_curr_votable, LIMIT_FCL_VOTER, true,
-				max(fcl_limit, oplus_ufcs_get_start_curr_min(chip)), false);
+				max(fcl_limit, UFCS_START_CP_CURR_MA), false);
 		else
 			vote(chip->ufcs_curr_votable, LIMIT_FCL_VOTER, false, 0, false);
 	}
@@ -5464,12 +5637,24 @@ static void oplus_ufcs_offset_current_temp_range(struct oplus_ufcs *chip, int up
 		chip->limits.ufcs_little_cool_temp += up_thr_offset;
 		chip->limits.ufcs_cool_temp += down_thr_offset;
 	} else if (chip->limits.ufcs_little_cool_high_temp != -EINVAL &&
-	    vbat_temp_cur < chip->limits.ufcs_little_cool_high_temp) { /*<21C*/
+		vbat_temp_cur < chip->limits.ufcs_little_cool_high_temp) { /*<21C*/
 		chip->limits.ufcs_little_cool_high_temp += up_thr_offset;
 		chip->limits.ufcs_little_cool_temp += down_thr_offset;
+	} else if (chip->limits.ufcs_normal_low_pre_temp != -EINVAL &&
+		vbat_temp_cur < chip->limits.ufcs_normal_low_pre_temp) {
+		chip->limits.ufcs_normal_low_pre_temp += up_thr_offset;
+		if (chip->limits.ufcs_little_cool_high_temp != -EINVAL)
+			chip->limits.ufcs_little_cool_high_temp += down_thr_offset;
+		else
+			chip->limits.ufcs_little_cool_temp += down_thr_offset;
 	} else if (vbat_temp_cur < chip->limits.ufcs_normal_low_temp) { /*<35C*/
 		chip->limits.ufcs_normal_low_temp += up_thr_offset;
-		chip->limits.ufcs_little_cool_high_temp += down_thr_offset;
+		if (chip->limits.ufcs_normal_low_pre_temp != -EINVAL)
+			chip->limits.ufcs_normal_low_pre_temp += down_thr_offset;
+		else if (chip->limits.ufcs_little_cool_high_temp != -EINVAL)
+			chip->limits.ufcs_little_cool_high_temp += down_thr_offset;
+		else
+			chip->limits.ufcs_little_cool_temp += down_thr_offset;
 	} else if (vbat_temp_cur < chip->limits.ufcs_normal_high_temp) { /*<43C*/
 		chip->limits.ufcs_normal_high_temp += up_thr_offset;
 		chip->limits.ufcs_normal_low_temp += down_thr_offset;
@@ -6847,7 +7032,8 @@ static int oplus_ufcs_update_bcc_temp_range(struct oplus_mms *mms,
 	chip = oplus_mms_get_drvdata(mms);
 
 	if ((chip->ufcs_temp_cur_range == UFCS_TEMP_RANGE_NORMAL_LOW) ||
-	    (chip->ufcs_temp_cur_range == UFCS_TEMP_RANGE_NORMAL_HIGH))
+	    (chip->ufcs_temp_cur_range == UFCS_TEMP_RANGE_NORMAL_HIGH) ||
+	    (chip->ufcs_temp_cur_range == UFCS_TEMP_RANGE_NORMAL_LOW_PRE))
 		data->intval = true;
 	else
 		data->intval = false;
@@ -7586,15 +7772,21 @@ static int oplus_ufcs_parse_charge_strategy(struct oplus_ufcs *chip)
 	rc = of_property_read_u32(node, "oplus,ufcs_little_cool_high_temp", &chip->limits.ufcs_little_cool_high_temp);
 	if (rc)
 		chip->limits.ufcs_little_cool_high_temp = -EINVAL;
-	chg_info("ufcs_charge_strategy_temp num = %d, [%d, %d, %d, %d, %d, %d, %d, %d]\n",
+	rc = of_property_read_u32(node, "oplus,ufcs_normal_low_pre_temp", &chip->limits.ufcs_normal_low_pre_temp);
+	if (rc)
+		chip->limits.ufcs_normal_low_pre_temp = -EINVAL;
+	chg_info("ufcs_charge_strategy_temp num = %d, [%d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
 		 chip->limits.ufcs_strategy_temp_num, rang_temp_tmp[0],
 		 rang_temp_tmp[1], rang_temp_tmp[2], rang_temp_tmp[3],
 		 chip->limits.ufcs_little_cool_high_temp,
+		 chip->limits.ufcs_normal_low_pre_temp,
 		 rang_temp_tmp[4], rang_temp_tmp[5], rang_temp_tmp[6]);
 	chip->limits.default_ufcs_normal_high_temp =
 		chip->limits.ufcs_normal_high_temp;
 	chip->limits.default_ufcs_normal_low_temp =
 		chip->limits.ufcs_normal_low_temp;
+	chip->limits.default_ufcs_normal_low_pre_temp =
+		chip->limits.ufcs_normal_low_pre_temp;
 	chip->limits.default_ufcs_little_cool_temp =
 		chip->limits.ufcs_little_cool_temp;
 	chip->limits.default_ufcs_little_cool_high_temp = chip->limits.ufcs_little_cool_high_temp;
@@ -8486,6 +8678,7 @@ static int oplus_ufcs_probe(struct platform_device *pdev)
 	INIT_WORK(&chip->cp_err_handler_work, oplus_ufcs_cp_err_handler_work);
 	INIT_WORK(&chip->cp_online_handler_work, oplus_ufcs_cp_online_handler_work);
 	INIT_WORK(&chip->cp_offline_handler_work, oplus_ufcs_cp_offline_handler_work);
+	INIT_WORK(&chip->set_fcs_icl_work, oplus_ufcs_set_fcs_icl_work);
 
 	oplus_ufcs_parse_temperature_strategy_init(chip);
 	atomic_set(&chip->temp_recover_debounce_thd, 0);

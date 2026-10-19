@@ -1461,10 +1461,10 @@ static ssize_t proc_set_idle_freq_mode_write(struct file *file,
 		TS_TP_INFO("%s: invalid value %d, should be 0 or 1\n", __func__, value);
 		return -EINVAL;
 	}
-
 	TS_TP_INFO("%s: value is %x.\n", __func__, value);
 
 	mutex_lock(&ts->mutex);
+	ts->idle_freq_enable = value;
 	if (ts->game_switch_support) {
 		if (ts->ts_ops->set_idle_freq_mode) {
 			ts->ts_ops->set_idle_freq_mode(value);
@@ -1487,6 +1487,7 @@ static ssize_t proc_set_idle_freq_mode_read(struct file *file, char __user *buff
 	if (!ts) {
 		return 0;
 	}
+	snprintf(page, PAGESIZE - 1, "value:%d\n", ts->idle_freq_enable);
 
 	ret = simple_read_from_buffer(buffer, count, ppos, page, strlen(page));
 	return ret;
@@ -3085,6 +3086,9 @@ static ssize_t proc_click_sensitive_level_write(struct file *file, const char __
 		ts->ts_ops->click_sensitive_lv_set(ts->chip_data, raw_level);
 	} else {
 		TS_TP_INFO("%s: TP is_suspended.\n", __func__);
+		TS_TP_INFO("ClickSensitiveLevel:%u, value:%u\n",
+			ts->click_sensitive_level_chosen,
+			ts->click_sensitive_level_array[ts->click_sensitive_level_chosen]);
 	}
 	mutex_unlock(&ts->mutex);
 
@@ -5485,15 +5489,15 @@ static ssize_t proc_rainstorm_mode_write(struct file *file, const char __user *b
 	}
 
 	mutex_lock(&ts->mutex);
+
+	ts->rainstorm_enable = !!value;
+	TP_INFO(ts->tp_index, "%s: rainstorm_enable value=%d\n", __func__, value);
+
 	if (ts->is_suspended) {
 		TS_TP_INFO("%s: is_suspended, exit\n", __func__);
 		mutex_unlock(&ts->mutex);
 		return count;
 	}
-
-	ts->rainstorm_enable = !!value;
-
-	TP_INFO(ts->tp_index, "%s: rainstorm_enable value=%d\n", __func__, value);
 
 	ret = ts->ts_ops->mode_switch(ts->chip_data, MODE_RAINSTORM, ts->rainstorm_enable);
 	if (ret < 0) {

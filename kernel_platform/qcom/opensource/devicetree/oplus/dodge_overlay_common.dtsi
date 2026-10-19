@@ -24,6 +24,67 @@
 		};
 	};
 
+	pmih010x-bcl-lvl1 {
+		cooling-maps {
+			lbat_gpu1 {
+				trip = <&b_bcl_lvl1>;
+				cooling-device = <&msm_gpu 8 8>;
+			};
+		};
+	};
+
+	pmih010x-bcl-lvl2 {
+		cooling-maps {
+			lbat_gpu2 {
+				trip = <&b_bcl_lvl2>;
+				cooling-device = <&msm_gpu 8 8>;
+			};
+		};
+	};
+
+	pm8550-bcl-lvl1 {
+		cooling-maps {
+			vph_gpu1 {
+				trip = <&bcl_lvl1>;
+				cooling-device = <&msm_gpu 8 8>;
+			};
+		};
+	};
+
+	pm8550-bcl-lvl2 {
+		cooling-maps {
+			vph_gpu2 {
+				trip = <&bcl_lvl2>;
+				cooling-device = <&msm_gpu 8 8>;
+			};
+		};
+	};
+
+	pm8550-bcl-vbat {
+		polling-delay-passive = <0>;
+		polling-delay = <0>;
+		thermal-sensors = <&pm8550_bcl 2>;
+
+		trips {
+			pm8550_vbat_lvl0: pm8550-vbat-lvl0 {
+				temperature = <2800>;
+				hysteresis = <100>;
+				type = "passive";
+			};
+
+			pm8550_vbat_lvl1: pm8550-vbat-lvl1 {
+				temperature = <2600>;
+				hysteresis = <100>;
+				type = "passive";
+			};
+
+			pm8550_vbat_lvl2: pm8550-vbat-lvl2 {
+				temperature = <2300>;
+				hysteresis = <100>;
+				type = "passive";
+			};
+		};
+	};
 };
 
 &pm8550_flash0 {

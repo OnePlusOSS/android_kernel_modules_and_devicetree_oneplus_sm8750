@@ -3058,7 +3058,7 @@ static int init_parse_dts(struct device *dev, struct touchpanel_data *ts)
 		TP_BOOT_INFO(ts->tp_index, "click_sensitive_level_array not specified %d\n", rc);
 	} else {
 		ts->click_sensitive_level_array_support = true;
-		for (i=0; i < SENSITIVE_LEVEL_NUM; i++) {
+		for (i=0; i < CLICK_SENSITIVE_LEVEL_NUM; i++) {
 			ts->click_sensitive_level_array[i] = temp_array[i];
 		}
 		ts->click_sensitive_level_used_array = (u32 *)&(ts->click_sensitive_level_array);
@@ -4491,6 +4491,7 @@ int register_common_touch_device(struct touchpanel_data *pdata)
 	ts->report_rate_testing = false;
 	ts->report_rate_test_time = 5;
 	ts->touch_frame_num = 0;
+	ts->idle_freq_enable = 0;
 	for (i = 0; i < MAX_FINGER_NUM; i++) {
 		ts->last_x_y_point[i].x = 0;
 		ts->last_x_y_point[i].y = 0;

@@ -1583,7 +1583,7 @@ static int zram_recompress(struct zram *zram, u32 index, struct page *page,
 	if (ret)
 		return ret;
 
-	class_index_old = zs_lookup_class_index(zram->mem_pool, comp_len_old);
+	class_index_old = zs_lookup_class_index_oplus(zram->mem_pool, comp_len_old);
 	/*
 	 * Iterate the secondary comp algorithms list (in order of priority)
 	 * and try to recompress the page.
@@ -1610,7 +1610,7 @@ static int zram_recompress(struct zram *zram, u32 index, struct page *page,
 			return ret;
 		}
 
-		class_index_new = zs_lookup_class_index(zram->mem_pool,
+		class_index_new = zs_lookup_class_index_oplus(zram->mem_pool,
 							comp_len_new);
 
 		/* Continue until we make progress */
@@ -2185,6 +2185,10 @@ static struct attribute *zram_disk_attrs[] = {
 	&dev_attr_io_stat.attr,
 	&dev_attr_mm_stat.attr,
 	&dev_attr_debug_stat.attr,
+#ifdef CONFIG_ZRAM_MULTI_COMP
+	&dev_attr_recomp_algorithm.attr,
+	&dev_attr_recompress.attr,
+#endif
 	NULL,
 };
 

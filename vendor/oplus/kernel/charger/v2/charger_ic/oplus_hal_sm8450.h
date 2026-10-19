@@ -33,10 +33,13 @@
 #define BCC_OPCODE_READ_BUFFER     0x10003
 #define PPS_OPCODE_READ_BUFFER     0x10004
 #define AP_OPCODE_UFCS_BUFFER      0x10005
+#define AP_OPCODE_READ_BUFFER      0x10007
 #define OEM_READ_WAIT_TIME_MS      500
 #define MAX_OEM_PROPERTY_DATA_SIZE 128
 #define QC_TYPE_CHECK_INTERVAL     200 /* ms */
 #define AP_UFCS_WAIT_TIME_MS       500
+#define AP_READ_WAIT_TIME_MS       500
+#define MAX_AP_PROPERTY_DATA_SIZE  512
 #define MAX_UFCS_CAPS_ITEM         16
 #endif
 
@@ -318,6 +321,25 @@ struct oplus_ap_read_ufcs_resp_msg {
 	struct pmic_glink_hdr hdr;
 	u64 data_buffer[MAX_UFCS_CAPS_ITEM];
 	u32 data_size;
+};
+
+struct oplus_ap_read_req_msg {
+	struct pmic_glink_hdr hdr;
+	u32 message_id;
+	u32 value;
+};
+
+struct oplus_ap_read_buffer_resp_msg {
+	struct pmic_glink_hdr hdr;
+	u32 message_id;
+	u8 data_buffer[MAX_AP_PROPERTY_DATA_SIZE];
+	u32 data_size;
+};
+
+enum oplus_ap_message_id {
+	AP_MESSAGE_ACK,
+	AP_MESSAGE_GET_LPD_INFO,
+	AP_MESSAGE_MAX_SIZE = 32,
 };
 #endif
 
@@ -928,6 +950,9 @@ struct battery_chg_dev {
 	struct oem_read_buffer_resp_msg  pps_read_buffer_dump;
 	struct mutex	pps_read_buffer_lock;
 	struct completion	 pps_read_ack;
+	struct oplus_ap_read_buffer_resp_msg	*ap_read_buffer_dump;
+	struct mutex				ap_read_buffer_lock;
+	struct completion			ap_read_ack[AP_MESSAGE_MAX_SIZE];
 	struct mutex	ufcs_read_buffer_lock;
 	struct completion	 ufcs_read_ack;
 	struct oplus_ap_read_ufcs_resp_msg ufcs_read_buffer_dump;

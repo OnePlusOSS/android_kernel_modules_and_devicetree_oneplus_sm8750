@@ -16,7 +16,6 @@ struct sha256_ctx_t {
 	uint8_t buf[SHA256_BLOCKLEN];		/* message block buffer */
 };
 
-void sha256_init(struct sha256_ctx_t *s);
 void sha256_final(struct sha256_ctx_t *s, uint8_t *md);
 void sha256_update(struct sha256_ctx_t *s, const uint8_t *m, uint32_t len);
 void calculate_sha256(uint8_t *message, uint32_t len, uint8_t *hash);

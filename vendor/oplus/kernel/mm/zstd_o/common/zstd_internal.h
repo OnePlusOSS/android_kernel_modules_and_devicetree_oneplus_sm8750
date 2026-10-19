@@ -30,6 +30,7 @@
 #define HUF_STATIC_LINKING_ONLY
 #include "huf.h"
 #include "../include/xxhash.h"                /* XXH_reset, update, digest */
+#include <linux/minmax.h>
 #define ZSTD_TRACE 0
 
 
@@ -43,8 +44,14 @@
 /*-*************************************
 *  shared macros
 ***************************************/
+#ifdef MIN
 #undef MIN
+#endif
+
+#ifdef MAX
 #undef MAX
+#endif
+
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
 #define MAX(a,b) ((a)>(b) ? (a) : (b))
 

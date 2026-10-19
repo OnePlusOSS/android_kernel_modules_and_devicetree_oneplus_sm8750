@@ -159,6 +159,19 @@
 				page_pool_order0_mb = <192>;
 				page_pool_order1_mb = <8>;
 			};
+			oplus_bsp_frr {
+				 feature-enable;
+			};
+		};
+		ram-12g {
+			 oplus_bsp_frr {
+				feature-enable;
+			};
+		};
+		ram-16g {
+			oplus_bsp_frr {
+				feature-enable;
+			};
 		};
 	};
 };

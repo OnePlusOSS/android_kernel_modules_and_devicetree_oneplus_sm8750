@@ -158,4 +158,5 @@ bool oplus_chglib_get_shaft_btb_is_normal(void);
 bool oplus_chglib_set_shaft_btb_over(bool is_shaft_btb_over);
 void oplus_chglib_set_vooc_startup(struct device *dev, int status);
 void oplus_chglib_set_ovp_forced(bool enable);
+int oplus_chglib_set_fcs_icl(int icl_ma);
 #endif /*__OPLUS_CHGLIB_H__*/

@@ -76,6 +76,22 @@ extern unsigned int tp_debug;
 				}\
 			}while(0)
 
+#define TPD_DEBUG_RATELIMIT_PRINT(count, a, arg...)\
+			do{\
+				if (LEVEL_DEBUG == tp_debug && count++ == TPD_PRINT_POINT_NUM) {\
+					TPD_INFO(TPD_DEVICE ": " a, ##arg);\
+					count = 0;\
+				}\
+			}while(0)
+
+#define TP_DEBUG_RATELIMIT_PRINT(index, count, a, arg...)\
+			do{\
+				if (LEVEL_DEBUG == tp_debug && count++ == TPD_PRINT_POINT_NUM) {\
+					TP_INFO(index, TPD_DEVICE ": " a, ##arg);\
+					count = 0;\
+				}\
+			}while(0)
+
 #define TPD_DEBUG_NTAG(a, arg...)\
 			do{\
 				if (tp_debug)\

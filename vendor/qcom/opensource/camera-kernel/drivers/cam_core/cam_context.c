@@ -412,6 +412,12 @@ int cam_context_handle_acquire_dev(struct cam_context *ctx,
 	INIT_LIST_HEAD(&ctx->free_req_list);
 
 	for (i = 0; i < ctx->req_size; i++) {
+		if (ctx->req_list[i].packet) {
+			CAM_ERR(CAM_CORE, "%s: req_list[%d] isn't clean, packet isn't NULL(%p)",
+				ctx->ctx_id_string, i, ctx->req_list[i].packet);
+			rc = -EINVAL;
+		}
+
 		INIT_LIST_HEAD(&ctx->req_list[i].list);
 		list_add_tail(&ctx->req_list[i].list, &ctx->free_req_list);
 	}

@@ -17,6 +17,7 @@
 #include <linux/delay.h>
 #include <linux/list.h>
 #include <linux/jiffies.h>
+#include <linux/wait.h>
 
 #include <oplus_chg.h>
 #include <oplus_chg_module.h>
@@ -89,7 +90,6 @@ struct oplus_cpa {
 	struct work_struct wired_offline_work;
 	struct work_struct wired_online_work;
 	struct work_struct switch_end_work;
-	struct work_struct wait_bc12_completed_work;
 #if IS_ENABLED(CONFIG_OPLUS_CHG_STATE_KEEP)
 	struct work_struct power_change_work;
 	struct work_struct state_keep_wired_offline_work;
@@ -153,7 +153,7 @@ struct oplus_cpa {
 	u32 bc12_check_timeout_ms;
 	int protocol_wait_cnt;
 	struct completion pd_completed_ack;
-	struct completion bc12_completed_ack;
+	wait_queue_head_t bc12_wq;
 	struct oplus_cpa_protocol_wait_info protocol_wait_table[CHG_PROTOCOL_MAX];
 
 #if IS_ENABLED(CONFIG_OPLUS_CHG_STATE_KEEP)
@@ -271,6 +271,37 @@ static int oplus_cpa_pd_completed_set(struct oplus_cpa *cpa, bool done)
 	return 0;
 }
 
+static void oplus_cpa_bc12_completed_set(struct oplus_cpa *cpa, bool done)
+{
+	if (!cpa->bc12_check_timeout_ms)
+		return;
+
+	WRITE_ONCE(cpa->bc12_completed, done);
+	wake_up(&cpa->bc12_wq);
+}
+
+static void oplus_cpa_bc12_wait(struct oplus_cpa *cpa, enum oplus_chg_protocol_type type)
+{
+	unsigned long left;
+
+	if (!cpa->bc12_check_timeout_ms)
+		return;
+
+	if (type <= CHG_PROTOCOL_INVALID || type == CHG_PROTOCOL_BC12)
+		return;
+
+	left = wait_event_timeout(cpa->bc12_wq,
+				  READ_ONCE(cpa->bc12_completed) ||
+				  !cpa->wired_online,
+				  msecs_to_jiffies(cpa->bc12_check_timeout_ms));
+	if (!left)
+		chg_err("wait bc1.2 completed timeout\n");
+	else if (!cpa->wired_online)
+		chg_info("bc1.2 wait aborted, wired offline\n");
+	else
+		chg_info("bc1.2 wait done, left=%u ms\n", jiffies_to_msecs(left));
+}
+
 static int oplus_cpa_protocol_wait(struct oplus_cpa *cpa, enum oplus_chg_protocol_type type)
 {
 	int rc = 0;
@@ -307,6 +338,7 @@ static int oplus_cpa_set_current_protocol_type(struct oplus_cpa *cpa, enum oplus
 		return 0;
 
 	oplus_cpa_protocol_wait(cpa, type);
+	oplus_cpa_bc12_wait(cpa, type);
 
 	chg_info("set current_protocol_type to %s\n", get_protocol_name_str(type));
 	cpa->current_protocol_type = type;
@@ -968,14 +1000,6 @@ static void oplus_cpa_wired_offline_work(struct work_struct *work)
 		return;
 	}
 
-	if (cpa->bc12_check_timeout_ms > 0) {
-		cpa->bc12_completed = false;
-		complete_all(&cpa->bc12_completed_ack);
-		cancel_work_sync(&cpa->wait_bc12_completed_work);
-		reinit_completion(&cpa->bc12_completed_ack);
-		vote(cpa->req_lock_votable, BC12_VOTER, true, true, false);
-	}
-
 #if IS_ENABLED(CONFIG_OPLUS_CHG_STATE_KEEP)
 	oplus_cpa_state_keep_offline_check(cpa);
 #endif
@@ -991,24 +1015,6 @@ static bool oplus_wired_offline_clear_cpa_queue(struct oplus_cpa *cpa)
 
 	old_time = cpa->wired_plugout_time + msecs_to_jiffies(WIRED_PLUGOUT_TO_PRESENT_MS);
 	return time_is_before_jiffies(old_time);
-}
-
-static void oplus_cpa_wait_bc12_completed_work(struct work_struct *work)
-{
-	struct oplus_cpa *cpa =
-		container_of(work, struct oplus_cpa, wait_bc12_completed_work);
-	int rc;
-
-	if (cpa->bc12_completed) {
-		vote(cpa->req_lock_votable, BC12_VOTER, false, false, false);
-		return;
-	}
-	rc = wait_for_completion_timeout(&cpa->bc12_completed_ack,
-		msecs_to_jiffies(cpa->bc12_check_timeout_ms));
-	if (!rc)
-		chg_err("wait bc1.2 completed timeout");
-
-	vote(cpa->req_lock_votable, BC12_VOTER, false, false, false);
 }
 
 static void oplus_cpa_wired_online_work(struct work_struct *work)
@@ -1046,13 +1052,34 @@ static void oplus_cpa_wired_online_work(struct work_struct *work)
 	cpa->wired_online = true;
 	WRITE_ONCE(cpa->status_reset, false);
 
-	if (cpa->bc12_check_timeout_ms > 0)
-		schedule_work(&cpa->wait_bc12_completed_work);
 	rc = oplus_mms_get_item_data(cpa->wired_topic, WIRED_ITEM_REAL_CHG_TYPE, &data, false);
 	if ((rc < 0) || (data.intval == OPLUS_CHG_USB_TYPE_UNKNOWN))
 		return;
 	schedule_work(&cpa->chg_type_change_work);
 	chg_info("done\n");
+}
+
+static void oplus_cpa_wired_online_change(struct oplus_cpa *cpa, bool online)
+{
+	if (!online) {
+		cpa->wired_online = false;
+		cpa->pd_comleted = false;
+		oplus_cpa_pd_completed_set(cpa, cpa->pd_comleted);
+		oplus_cpa_bc12_completed_set(cpa, false);
+		if (!cpa->retention_topic) {
+			chg_info("schedule wired_offline_work\n");
+			schedule_work(&cpa->wired_offline_work);
+		} else if ((cpa->retention_state_ready || cpa->pre_retention_state)
+			&& !cpa->retention_state) {
+			chg_info("retention_state is false, schedule wired_offline_work\n");
+			schedule_work(&cpa->wired_offline_work);
+		}
+		cpa->pre_retention_state = cpa->retention_state;
+	} else {
+		if (!cpa->retention_state)
+			cpa->retention_state_ready = false;
+		schedule_work(&cpa->wired_online_work);
+	}
 }
 
 static void oplus_cpa_wired_subs_callback(struct mms_subscribe *subs,
@@ -1066,24 +1093,7 @@ static void oplus_cpa_wired_subs_callback(struct mms_subscribe *subs,
 		switch (id) {
 		case WIRED_ITEM_ONLINE:
 			oplus_mms_get_item_data(cpa->wired_topic, id, &data, false);
-			if (!data.intval) {
-				cpa->wired_online = false;
-				cpa->pd_comleted = false;
-				oplus_cpa_pd_completed_set(cpa, cpa->pd_comleted);
-				if (!cpa->retention_topic) {
-					chg_info("schedule wired_offline_work\n");
-					schedule_work(&cpa->wired_offline_work);
-				} else if ((cpa->retention_state_ready || cpa->pre_retention_state)
-					&& !cpa->retention_state) {
-					chg_info("retention_state is false, schedule wired_offline_work\n");
-					schedule_work(&cpa->wired_offline_work);
-				}
-				cpa->pre_retention_state = cpa->retention_state;
-			} else {
-				if (!cpa->retention_state)
-					cpa->retention_state_ready = false;
-				schedule_work(&cpa->wired_online_work);
-			}
+			oplus_cpa_wired_online_change(cpa, !!data.intval);
 			break;
 		case WIRED_ITEM_REAL_CHG_TYPE:
 			oplus_mms_get_item_data(cpa->wired_topic, id, &data, false);
@@ -1113,8 +1123,8 @@ static void oplus_cpa_wired_subs_callback(struct mms_subscribe *subs,
 			oplus_cpa_pd_completed_set(cpa, cpa->pd_comleted);
 			break;
 		case WIRED_ITEM_BC12_COMPLETED:
-			cpa->bc12_completed = true;
-			complete_all(&cpa->bc12_completed_ack);
+			oplus_mms_get_item_data(cpa->wired_topic, id, &data, false);
+			oplus_cpa_bc12_completed_set(cpa, !!data.intval);
 			break;
 		case WIRED_ITEM_PRESENT:
 			oplus_mms_get_item_data(cpa->wired_topic, id, &data, false);
@@ -2013,11 +2023,11 @@ static int oplus_cpa_probe(struct platform_device *pdev)
 	cpa->request_locked = false;
 	cpa->status_reset = true;
 	cpa->region_id = DEFAULT_REGION_ID;
-	cpa->bc12_completed = false;
+	WRITE_ONCE(cpa->bc12_completed, false);
 	mutex_init(&cpa->cpa_request_lock);
 	mutex_init(&cpa->start_lock);
 	init_completion(&cpa->pd_completed_ack);
-	init_completion(&cpa->bc12_completed_ack);
+	init_waitqueue_head(&cpa->bc12_wq);
 #if IS_ENABLED(CONFIG_OPLUS_CHG_STATE_KEEP)
 	mutex_init(&cpa->keep.ready_lock);
 #endif
@@ -2035,7 +2045,6 @@ static int oplus_cpa_probe(struct platform_device *pdev)
 #endif
 	INIT_DELAYED_WORK(&cpa->protocol_switch_timeout_work, oplus_cpa_protocol_switch_timeout_work);
 	INIT_DELAYED_WORK(&cpa->protocol_ready_timeout_work, oplus_cpa_protocol_ready_timeout_work);
-	INIT_WORK(&cpa->wait_bc12_completed_work, oplus_cpa_wait_bc12_completed_work);
 
 	cpa->req_lock_votable = create_votable("CPA_REQ_LOCK", VOTE_SET_ANY,
 				oplus_cpa_request_lock_vote_callback,
@@ -2046,8 +2055,6 @@ static int oplus_cpa_probe(struct platform_device *pdev)
 		goto votable_init_err;
 	}
 	vote(cpa->req_lock_votable, DEF_VOTER, true, 1, false);
-	if (cpa->bc12_check_timeout_ms > 0)
-		vote(cpa->req_lock_votable, BC12_VOTER, true, true, false);
 
 	rc = oplus_cpa_topic_init(cpa);
 	if (rc < 0)

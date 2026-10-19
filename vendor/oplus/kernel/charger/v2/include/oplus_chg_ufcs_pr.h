@@ -58,6 +58,7 @@
 
 #define UFCS_PR_MIN_REQ_CURRENT		500
 
+#define UFCS_START_DEF_CURR_MA      2000
 
 static void ufcs_pr_parse_dt(struct oplus_ufcs *chip, struct device_node *node)
 {
@@ -211,7 +212,7 @@ static void ufcs_pr_init(struct oplus_ufcs *chip)
 
 	pr_data->bcc_target_update_jiffies = jiffies;
 
-	pr_data->target_current_ma = oplus_ufcs_get_start_curr_min(chip);
+	pr_data->target_current_ma = UFCS_START_DEF_CURR_MA;
 	pr_data->req_vbus_max_mv = chip->config.target_vbus_mv;
 	pr_data->request_voltage_mv = min(pr_data->req_vbus_max_mv, chip->vol_set_mv);
 	pr_data->request_current_ma = chip->curr_set_ma;
@@ -499,14 +500,18 @@ static int ufcs_pr_handle_falling_adjust(struct oplus_ufcs *chip)
 		pr_data->adjust = false;
 		delay_ms = UFCS_PR_FAST_DELAY_MS;
 		if (chip->target_curr_ma != pr_data->target_current_ma) {
-			if (pr_data->falling_cc_adjust)
+			if (pr_data->falling_cc_adjust) {
+				ufcs_pr_set_pdo(chip, pr_data->adapter_vbus_mv, true);
 				ufcs_pr_set_pdo(chip, pr_data->adapter_vbus_mv, false);
+			}
 			pr_data->adjust = false;
 			ufcs_pr_set_state(chip, UFCS_PR_IDLE);
 			delay_ms = UFCS_PR_FAST_DELAY_MS;
 		} else if (pr_data->adapter_ibus_ma - UFCS_PR_FALLING_IBUS_TOLERANCE <= chip->target_curr_ma) {
-			if (pr_data->falling_cc_adjust)
+			if (pr_data->falling_cc_adjust) {
+				ufcs_pr_set_pdo(chip, pr_data->adapter_vbus_mv, true);
 				ufcs_pr_set_pdo(chip, pr_data->adapter_vbus_mv, false);
+			}
 			pr_data->adjust = false;
 			ufcs_pr_set_state(chip, UFCS_PR_CC);
 			pr_data->adjust_rising_cnt = 0;

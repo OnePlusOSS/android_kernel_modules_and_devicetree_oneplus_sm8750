@@ -2388,6 +2388,9 @@ int tp_healthinfo_read(struct seq_file *s, void *tp_monitor_data)
 	if (monitor_data->sensitive_level_chosen) {
 		seq_printf(s, "sensitive_lv:%d\n", monitor_data->sensitive_level_chosen);
 	}
+	if (monitor_data->click_sensitive_level_chosen) {
+		seq_printf(s, "clicksensitive_lv:%d\n", monitor_data->click_sensitive_level_chosen);
+	}
 
 		/*black gesture*/
 	list_for_each(pos, &monitor_data->gesture_values_list) {
@@ -2727,6 +2730,7 @@ int tp_healthinfo_clear(void *tp_monitor_data)
 
 	monitor_data->smooth_level_chosen = 0;
 	monitor_data->sensitive_level_chosen = 0;
+	monitor_data->click_sensitive_level_chosen = 0;
 
 	clear_value_count_list(&monitor_data->gesture_values_list);
 	clear_value_count_list(&monitor_data->invalid_gesture_values_list);

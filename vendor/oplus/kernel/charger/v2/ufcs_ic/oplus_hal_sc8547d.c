@@ -384,6 +384,16 @@ static void sc8547d_awake_init(struct sc8547d_device *chip)
 	chip->chip_ws = wakeup_source_register(chip->dev, "sc8547d_ws");
 }
 
+static void sc8547d_awake_deinit(struct sc8547d_device *chip)
+{
+	if (!chip || !chip->chip_ws) {
+		chg_err("chip is NULL\n");
+		return;
+	}
+	wakeup_source_unregister(chip->chip_ws);
+	chip->chip_ws = NULL;
+}
+
 __maybe_unused static void sc8547d_set_awake(struct sc8547d_device *chip, bool awake)
 {
 	static bool pm_flag = false;
@@ -1207,6 +1217,10 @@ static int sc8547_voocphy_init_vooc(struct oplus_voocphy_manager *voocphy)
 		chg_err("read value %d\n", value);
 
 		/*dpdm */
+		if (oplus_chg_get_fcs_support_flags()) {
+			sc8547_write_byte(chip->client, SC8547_REG_21, 0x31);
+			msleep(30);
+		}
 		sc8547_write_byte(chip->client, SC8547_REG_21, 0x21);
 		sc8547_write_byte(chip->client, SC8547_REG_22, 0x00);
 		sc8547_write_byte(chip->client, SC8547_REG_33, 0xD1);
@@ -2118,8 +2132,26 @@ static u8 sc8547d_voocphy_get_vbus_status(struct oplus_voocphy_manager *chip)
 
 static void sc8547_create_device_node(struct device *dev)
 {
-	device_create_file(dev, &dev_attr_registers);
-	device_create_file(dev, &dev_attr_track_reg);
+	int ret;
+
+	ret = device_create_file(dev, &dev_attr_registers);
+	if (ret && ret != -EEXIST)
+		chg_err("create registers node failed, rc=%d\n", ret);
+
+	ret = device_create_file(dev, &dev_attr_track_reg);
+	if (ret && ret != -EEXIST)
+		chg_err("create track_reg node failed, rc=%d\n", ret);
+}
+
+static void sc8547_remove_device_node(struct device *dev)
+{
+	if (!dev) {
+		chg_err("device is NULL\n");
+		return;
+	}
+
+	device_remove_file(dev, &dev_attr_registers);
+	device_remove_file(dev, &dev_attr_track_reg);
 }
 
 static struct oplus_voocphy_operations oplus_sc8547_ops = {
@@ -2470,6 +2502,80 @@ static int sc8547d_retrieve_flags(struct ufcs_dev *ufcs)
 	return rc;
 }
 
+#define SC8547D_DP_20K_PD_EN_MASK BIT(4)
+#define SC8547D_DM_20K_PD_EN_MASK BIT(5)
+static int sc8547d_cp_reset_dpdm(struct ufcs_dev *ufcs)
+{
+	struct sc8547d_device *chip = ufcs->drv_data;
+	int rc = 0;
+	int ufcs_disable_rc = 0;
+	static bool first = true;
+	u8 value = 0;
+	bool ufcs_enable_success = false;
+
+	if (!first && !oplus_chg_get_fcs_support_flags())
+		return 0;
+	first = false;
+
+	if (chip == NULL) {
+		chg_err("sc8547d chip is NULL\n");
+		return -ENODEV;
+	}
+
+	// SC8547D_ADDR_UFCS_CTRL1 = 0x40
+	rc = sc8547_read_byte(chip->client, SC8547D_ADDR_UFCS_CTRL1, &value);
+	if (rc < 0) {
+		chg_err("[%s] read SC8547D_ADDR_UFCS_CTRL1 error, rc=%d\n",
+			chip->dev->of_node->name, rc);
+		goto reset_dpdm_err;
+	}
+
+	if (!(value & SC8547D_CMD_EN_CHIP)) {
+		rc = sc8547d_ufcs_enable(chip->ufcs);
+		if (rc < 0) {
+			chg_err("sc8547d_ufcs_enable failed, rc=%d\n", rc);
+			goto reset_dpdm_err;
+		}
+		ufcs_enable_success = true;
+	}
+
+	rc = sc8547_read_byte(chip->client, SC8547_REG_21, &value);
+	if (rc < 0) {
+		chg_err("[%s] read SC8547_REG_21 error, rc=%d\n", chip->dev->of_node->name, rc);
+		goto reset_dpdm_err;
+	}
+
+	rc = sc8547_write_byte(chip->client, SC8547_REG_21,
+		value | (SC8547D_DP_20K_PD_EN_MASK | SC8547D_DM_20K_PD_EN_MASK));
+	if(rc < 0) {
+		chg_err("dpdm pull down failed, rc=%d\n", rc);
+		goto reset_dpdm_err;
+	}
+	chg_info("dpdm pull down\n");
+
+	msleep(30);
+
+	rc = sc8547_write_byte(chip->client, SC8547_REG_21,
+		value & ~(SC8547D_DP_20K_PD_EN_MASK | SC8547D_DM_20K_PD_EN_MASK));
+	if(rc < 0) {
+		chg_err("dpdm pull up failed, rc=%d\n", rc);
+		goto reset_dpdm_err;
+	}
+	chg_info("dpdm pull up\n");
+
+reset_dpdm_err:
+	if (ufcs_enable_success) {
+		ufcs_disable_rc = sc8547d_ufcs_disable(chip->ufcs);
+		if (ufcs_disable_rc < 0)
+			chg_err("sc8547d_ufcs_disable failed, ufcs_disable_rc=%d\n",
+				ufcs_disable_rc);
+		if (rc >= 0)
+			rc = ufcs_disable_rc;
+	}
+
+	return rc;
+}
+
 static struct ufcs_dev_ops ufcs_ops = {
 	.init = sc8547d_ufcs_init,
 	.write_msg = sc8547d_ufcs_write_msg,
@@ -2482,6 +2588,7 @@ static struct ufcs_dev_ops ufcs_ops = {
 	.disable = sc8547d_ufcs_disable,
 	.watchdog_config = sc8547d_ufcs_cp_watchdog_config,
 	.retrieve_flags = sc8547d_retrieve_flags,
+	.reset_dpdm = sc8547d_cp_reset_dpdm,
 };
 
 static int sc8547_charger_choose(struct sc8547d_device *chip)
@@ -3766,7 +3873,6 @@ static int sc8547d_parse_dt(struct sc8547d_device *chip)
 	chg_info("use_vooc_phy=%d, use_ufcs_phy=%d, use_slave_cp=%d, vac_support=%d, always_otg_en=%d\n",
 		 chip->use_vooc_phy, chip->use_ufcs_phy, chip->use_slave_cp, chip->vac_support,
 		 chip->always_otg_en);
-
 	return 0;
 }
 
@@ -3783,6 +3889,15 @@ static void sc8547_mms_wait_topic(struct sc8547d_device *chip)
 	oplus_mms_wait_topic("wired", sc8547d_subscribe_wired_topic, chip);
 }
 
+static void sc8547d_init_default(struct sc8547d_device *chip)
+{
+	chip->ufcs_enable = false;
+	chip->voocphy_enable = false;
+	vote(chip->disable_votable, DEF_VOTER, false, 0, false);
+
+	sc8547_mms_wait_topic(chip);
+}
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0))
 static int sc8547d_driver_probe(struct i2c_client *client)
 #else
@@ -3792,7 +3907,13 @@ static int sc8547d_driver_probe(struct i2c_client *client,
 {
 	struct sc8547d_device *chip;
 	struct oplus_voocphy_manager *voocphy;
+	struct device_node *node = oplus_get_node_by_child_gauge(client->dev.of_node);
 	int rc;
+
+	if (node && of_property_read_bool(node, "skip_cp_probe")) {
+		chg_info("non-use cp, skip cp driver probe\n");
+		return -ENODEV;
+	}
 
 	chip = devm_kzalloc(&client->dev, sizeof(struct sc8547d_device), GFP_KERNEL);
 	if (chip == NULL) {
@@ -3841,7 +3962,7 @@ static int sc8547d_driver_probe(struct i2c_client *client,
 		rc = sc8547_charger_choose(chip);
 		if (rc <= 0) {
 			chg_err("choose error, rc=%d\n", rc);
-			goto regmap_init_err;
+			goto choose_err;
 		}
 		if (!sc8547d_hw_version_check(chip)) {
 			chg_err("not sc8547d\n");
@@ -3858,7 +3979,7 @@ static int sc8547d_driver_probe(struct i2c_client *client,
 		rc = sc8547_slave_charger_choose(chip);
 		if (rc <= 0) {
 			chg_err("slave cp choose error, rc=%d\n", rc);
-			goto regmap_init_err;
+			goto choose_err;
 		}
 		if (!sc8547d_hw_version_check(chip)) {
 			chg_err("not sc8547d\n");
@@ -3906,11 +4027,7 @@ skip_ufcs_reg:
 		goto cp_reg_err;
 	}
 
-	chip->ufcs_enable = false;
-	chip->voocphy_enable = false;
-	vote(chip->disable_votable, DEF_VOTER, false, 0, false);
-
-	sc8547_mms_wait_topic(chip);
+	sc8547d_init_default(chip);
 	chg_info("sc8547d(%s) probe successfully\n", chip->dev->of_node->name);
 
 	return 0;
@@ -3926,6 +4043,9 @@ irq_reg_err:
 		ufcs_device_unregister(chip->ufcs);
 reg_ufcs_err:
 reg_voocphy_err:
+choose_err:
+	sc8547d_awake_deinit(chip);
+	sc8547_remove_device_node(&(client->dev));
 regmap_init_err:
 parse_dt_err:
 	devm_kfree(&client->dev, voocphy);

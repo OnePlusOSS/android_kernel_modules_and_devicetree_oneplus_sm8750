@@ -25,6 +25,7 @@
 #include "inc/pd_dpm_pdo_select.h"
 #endif	/* CONFIG_USB_POWER_DELIVERY */
 
+#define TCPM_BK_PD_CMD_TOUT	500
 
 /* Check status */
 static int tcpm_check_typec_attached(struct tcpc_device *tcpc)
@@ -37,12 +38,17 @@ static int tcpm_check_typec_attached(struct tcpc_device *tcpc)
 }
 
 #if IS_ENABLED(CONFIG_USB_POWER_DELIVERY)
-static int tcpm_check_pd_attached(struct tcpc_device *tcpc)
+int tcpm_check_pd_attached(struct tcpc_device *tcpc)
 {
 	int ret = TCPM_SUCCESS;
-	struct pd_port *pd_port = &tcpc->pd_port;
-	struct pe_data *pe_data = &pd_port->pe_data;
+	struct pd_port *pd_port;
+	struct pe_data *pe_data;
 
+	if (tcpc == NULL) {
+		return TCPM_ERROR_PARAMETER;
+	}
+	pd_port = &tcpc->pd_port;
+	pe_data = &pd_port->pe_data;
 	tcpci_lock_typec(tcpc);
 
 	if (!tcpc->pd_inited_flag) {
@@ -71,6 +77,7 @@ unlock_pd_out:
 	mutex_unlock(&pd_port->pd_lock);
 	return ret;
 }
+EXPORT_SYMBOL(tcpm_check_pd_attached);
 #endif	/* CONFIG_USB_POWER_DELIVERY */
 
 
@@ -630,6 +637,57 @@ bool tcpm_extract_power_cap_val(uint32_t pdo, struct tcpm_power_cap_val *cap)
 }
 EXPORT_SYMBOL(tcpm_extract_power_cap_val);
 
+int tcpm_inquire_pd_local_source_cap(
+	struct tcpc_device *tcpc, struct tcpm_power_cap *cap)
+{
+	struct pd_port *pd_port;
+	uint8_t max_cnt;
+	uint8_t i;
+
+	if (tcpc == NULL || cap == NULL)
+		return TCPM_ERROR_PARAMETER;
+	pd_port = &tcpc->pd_port;
+	mutex_lock(&pd_port->pd_lock);
+	max_cnt = (uint8_t)(sizeof(cap->pdos) / sizeof(cap->pdos[0]));
+	cap->cnt = pd_port->local_src_cap_default.nr > max_cnt ?
+		   max_cnt : pd_port->local_src_cap_default.nr;
+	if (cap->cnt > PDO_MAX_NR)
+		cap->cnt = PDO_MAX_NR;
+	for (i = 0; i < cap->cnt; i++)
+		cap->pdos[i] = pd_port->local_src_cap_default.pdos[i];
+	mutex_unlock(&pd_port->pd_lock);
+
+	return TCPM_SUCCESS;
+}
+EXPORT_SYMBOL(tcpm_inquire_pd_local_source_cap);
+
+int tcpm_set_pd_local_source_cap(
+	struct tcpc_device *tcpc, struct tcpm_power_cap *cap)
+{
+	struct pd_port *pd_port;
+	struct tcpm_power_cap_val cap_val;
+
+	if (tcpc == NULL || cap == NULL)
+		return TCPM_ERROR_PARAMETER;
+
+	pd_port = &tcpc->pd_port;
+	if (!tcpm_extract_power_cap_val(cap->pdos[0], &cap_val)) {
+		return TCPM_ERROR_PARAMETER;
+	} else if (cap->cnt == 0 || cap->cnt > PDO_MAX_NR ||
+		   cap_val.type != TCPM_POWER_CAP_VAL_TYPE_FIXED ||
+		   cap_val.max_mv != 5000 || cap_val.min_mv != 5000) {
+		return TCPM_ERROR_PARAMETER;
+	}
+
+	mutex_lock(&pd_port->pd_lock);
+	pd_port->local_src_cap_default.nr = cap->cnt;
+	memcpy(pd_port->local_src_cap_default.pdos, cap->pdos,
+	       sizeof(uint32_t) * cap->cnt);
+	mutex_unlock(&pd_port->pd_lock);
+	return TCPM_SUCCESS;
+}
+EXPORT_SYMBOL(tcpm_set_pd_local_source_cap);
+
 bool tcpm_extract_power_cap_list(
 	struct tcpm_power_cap *cap, struct tcpm_power_cap_list *cap_list)
 {
@@ -846,6 +904,17 @@ int tcpm_dpm_pd_get_sink_cap(struct tcpc_device *tcpc,
 		tcpc, &tcp_event, cb_data, TCPM_BK_PD_CMD_TOUT);
 }
 EXPORT_SYMBOL(tcpm_dpm_pd_get_sink_cap);
+
+int tcpm_dpm_pd_source_cap(struct tcpc_device *tcpc,
+	const struct tcp_dpm_event_cb_data *cb_data)
+{
+	struct tcp_dpm_event tcp_event = {
+		.event_id = TCP_DPM_EVT_SOURCE_CAP,
+	};
+	return tcpm_put_tcp_dpm_event_cbk1(
+		tcpc, &tcp_event, cb_data, TCPM_BK_REQUEST_TOUT);
+}
+EXPORT_SYMBOL(tcpm_dpm_pd_source_cap);
 
 int tcpm_dpm_pd_request(struct tcpc_device *tcpc,
 	int mv, int ma, const struct tcp_dpm_event_cb_data *cb_data)

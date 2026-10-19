@@ -470,7 +470,7 @@ static int pcc_strategy_get_data(struct oplus_chg_strategy *strategy, void *ret)
 	pcc = (struct pcc_strategy *)strategy;
 
 	mutex_lock(&pcc->lock);
-	*((int *)ret) = pcc->ibus_req / 100;
+	*((char *)ret) = pcc->ibus_req / 100;
 	mutex_unlock(&pcc->lock);
 
 	return 0;

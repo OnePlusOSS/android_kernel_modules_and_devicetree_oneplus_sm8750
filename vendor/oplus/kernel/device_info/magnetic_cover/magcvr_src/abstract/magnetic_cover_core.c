@@ -4,6 +4,9 @@
 
 #include "../../magcvr_include/abstract/magnetic_cover.h"
 
+static DEFINE_MUTEX(magcvr_stats_by_index_lock);
+static struct magnetic_cover_info *g_magcvr_info_by_index[MAGCVR_STATS_INDEX_MAX];
+
 // fault injection start
 void fault_injection_check(struct magnetic_cover_info *magcvr_info, char *token)
 {
@@ -345,6 +348,10 @@ static int proc_magcvr_healthinfo_read(struct seq_file *s, void *v)
 {
 	struct magnetic_cover_info *magcvr_info = s->private;
 	int ret = 0;
+	struct magnetic_cover_info *wlc;
+	struct magnetic_cover_info *pen;
+	unsigned long aw = 0, ap = 0, dw = 0, dp = 0;
+
 	MAG_CVR_LOG("call");
 
 	if (!magcvr_info) {
@@ -371,8 +378,45 @@ static int proc_magcvr_healthinfo_read(struct seq_file *s, void *v)
 
 	seq_printf(s, "chip_ic_err:%d\n", magcvr_info->init_chip_failed);
 
+	mutex_lock(&magcvr_stats_by_index_lock);
+	wlc = READ_ONCE(g_magcvr_info_by_index[0]);
+	pen = READ_ONCE(g_magcvr_info_by_index[1]);
+	aw = wlc ? (unsigned long)atomic_long_read(&wlc->stats_attach_wireless_cnt) : 0;
+	ap = pen ? (unsigned long)atomic_long_read(&pen->stats_attach_pen_cnt) : 0;
+	dw = wlc ? (unsigned long)atomic_long_read(&wlc->stats_detach_wireless_cnt) : 0;
+	dp = pen ? (unsigned long)atomic_long_read(&pen->stats_detach_pen_cnt) : 0;
+	mutex_unlock(&magcvr_stats_by_index_lock);
+
+	seq_printf(s, "magcvr_attach_wlc_cnt:%lu\n", aw);
+	seq_printf(s, "magcvr_attach_pen_cnt:%lu\n", ap);
+	seq_printf(s, "magcvr_detach_wlc_cnt:%lu\n", dw);
+	seq_printf(s, "magcvr_detach_pen_cnt:%lu\n", dp);
+
 	// state feedback
 	return ret;
+}
+
+/*
+ * Clear magcvr attach/detach stats on both paths after userspace upload ack (write "0").
+ * g_magcvr_info_by_index[] is protected by magcvr_stats_by_index_lock; counters use
+ * atomic_long_* so bump/read/clear do not race on the integer values.
+ */
+static void magcvr_stats_clear_all(void)
+{
+	int i;
+	struct magnetic_cover_info *p;
+
+	mutex_lock(&magcvr_stats_by_index_lock);
+	for (i = 0; i < MAGCVR_STATS_INDEX_MAX; i++) {
+		p = READ_ONCE(g_magcvr_info_by_index[i]);
+		if (!p)
+			continue;
+		atomic_long_set(&p->stats_attach_wireless_cnt, 0);
+		atomic_long_set(&p->stats_attach_pen_cnt, 0);
+		atomic_long_set(&p->stats_detach_wireless_cnt, 0);
+		atomic_long_set(&p->stats_detach_pen_cnt, 0);
+	}
+	mutex_unlock(&magcvr_stats_by_index_lock);
 }
 
 // proc control for :: proc_magcvr_healthinfo_write
@@ -390,6 +434,7 @@ static ssize_t proc_magcvr_healthinfo_write(struct file *file, const char __user
 	char *token = NULL;
 	char *running = NULL;
 	int ret = 0;
+	size_t n;
 
 	MAG_CVR_LOG("call.\n");
 	if (!magcvr_info) {
@@ -408,8 +453,19 @@ static ssize_t proc_magcvr_healthinfo_write(struct file *file, const char __user
 		return count;
 	}
 
-	temp[count-ret-1] = '\0';
-	running = temp;
+	n = count - ret;
+	if (n >= INPUT_BUF_SIZE)
+		n = INPUT_BUF_SIZE - 1;
+	temp[n] = '\0';
+
+	/* Upload ack: whole line is "0" (e.g. echo 0 > magcvr_healthinfo) */
+	running = strim(temp);
+	if (strcmp(running, "0") == 0) {
+		magcvr_stats_clear_all();
+		MAG_CVR_LOG("magcvr stats cleared (upload ack)\n");
+		return count;
+	}
+
 	MAG_CVR_DEBUG("end->temp:%s,count:%zu\n", temp, count);
 	token = strsep(&running, CHECK_SEPARATOR);
 
@@ -1108,6 +1164,34 @@ void mag_call_notifier(int position)
 }
 #endif
 
+static void magcvr_stats_bump_on_far_near_change(struct magnetic_cover_info *magcvr_info)
+{
+	int prev, pos;
+
+	if (!magcvr_info || magcvr_info->driver_start)
+		return;
+
+	pos = magcvr_info->position;
+	prev = magcvr_info->last_position;
+	if (pos == prev)
+		return;
+	if ((pos != MAGNETIC_COVER_INPUT_FAR && pos != MAGNETIC_COVER_INPUT_NEAR) ||
+	    (prev != MAGNETIC_COVER_INPUT_FAR && prev != MAGNETIC_COVER_INPUT_NEAR))
+		return;
+
+	if (pos == MAGNETIC_COVER_INPUT_NEAR) {
+		if (magcvr_info->magcvr_index == 0)
+			atomic_long_inc(&magcvr_info->stats_attach_wireless_cnt);
+		else if (magcvr_info->magcvr_index == 1)
+			atomic_long_inc(&magcvr_info->stats_attach_pen_cnt);
+	} else {
+		if (magcvr_info->magcvr_index == 0)
+			atomic_long_inc(&magcvr_info->stats_detach_wireless_cnt);
+		else if (magcvr_info->magcvr_index == 1)
+			atomic_long_inc(&magcvr_info->stats_detach_pen_cnt);
+	}
+}
+
 int magcvr_set_position(struct magnetic_cover_info *magcvr_info)
 {
 	int ret = 0;
@@ -1164,6 +1248,8 @@ int magcvr_set_position(struct magnetic_cover_info *magcvr_info)
 			MAG_CVR_LOG("[NEG]-->FAR\n");
 		}
 	}
+
+	magcvr_stats_bump_on_far_near_change(magcvr_info);
 
 #if IS_ENABLED(CONFIG_OPLUS_MAGCVR_NOTIFY)
 	magcvr_set_current_pos(magcvr_info->magcvr_index, magcvr_info->position);
@@ -1230,6 +1316,10 @@ static int magcvr_init_something(struct magnetic_cover_info *magcvr_info)
 	magcvr_info->same_position    = false;
 	magcvr_info->noise_set_threshold = false;
 	magcvr_info->update_first_position   = false;
+	atomic_long_set(&magcvr_info->stats_attach_wireless_cnt, 0);
+	atomic_long_set(&magcvr_info->stats_attach_pen_cnt, 0);
+	atomic_long_set(&magcvr_info->stats_detach_wireless_cnt, 0);
+	atomic_long_set(&magcvr_info->stats_detach_pen_cnt, 0);
 
 	return ret;
 }
@@ -1541,6 +1631,14 @@ int magcvr_core_init(struct magnetic_cover_info *magcvr_data)
 	// enable irq
 	enable_irq(magcvr_info->irq);
 	MAG_CVR_LOG(" all success. abstract end, enable irq:%d\n", magcvr_info->irq);
+
+	if (magcvr_info->magcvr_index >= 0 &&
+	    magcvr_info->magcvr_index < MAGCVR_STATS_INDEX_MAX) {
+		mutex_lock(&magcvr_stats_by_index_lock);
+		WRITE_ONCE(g_magcvr_info_by_index[magcvr_info->magcvr_index], magcvr_info);
+		mutex_unlock(&magcvr_stats_by_index_lock);
+	}
+
 	return 0;
 
 INIT_ERR:
@@ -1581,6 +1679,13 @@ void unregister_magcvr_core(struct magnetic_cover_info *magcvr_info)
 	if (magcvr_info == NULL) {
 		MAG_CVR_ERR("magcvr_info == NULL\n");
 		return;
+	}
+	if (magcvr_info->magcvr_index >= 0 &&
+	    magcvr_info->magcvr_index < MAGCVR_STATS_INDEX_MAX) {
+		mutex_lock(&magcvr_stats_by_index_lock);
+		if (READ_ONCE(g_magcvr_info_by_index[magcvr_info->magcvr_index]) == magcvr_info)
+			WRITE_ONCE(g_magcvr_info_by_index[magcvr_info->magcvr_index], NULL);
+		mutex_unlock(&magcvr_stats_by_index_lock);
 	}
 	// free proc
 	if (magcvr_info->prEntry_magcvr) {

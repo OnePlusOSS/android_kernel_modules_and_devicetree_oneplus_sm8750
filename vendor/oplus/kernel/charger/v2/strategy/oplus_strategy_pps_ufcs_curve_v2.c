@@ -9,6 +9,7 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/of.h>
+#include <linux/string.h>
 #include <oplus_chg.h>
 #include <oplus_mms.h>
 #include <oplus_mms_gauge.h>
@@ -31,6 +32,7 @@ enum puc_temp_range {
 	PUC_BATT_CURVE_TEMP_RANGE_COOL,
 	PUC_BATT_CURVE_TEMP_RANGE_LITTLE_COOL,
 	PUC_BATT_CURVE_TEMP_RANGE_LITTLE_COOL_HIGH,
+	PUC_BATT_CURVE_TEMP_RANGE_NORMAL_LOW_PRE,
 	PUC_BATT_CURVE_TEMP_RANGE_NORMAL_LOW,
 	PUC_BATT_CURVE_TEMP_RANGE_NORMAL_HIGH,
 	PUC_BATT_CURVE_TEMP_RANGE_WARM,
@@ -57,6 +59,10 @@ struct puc_strategy {
 	int temp_region;
 	int allow_soc;
 	int iterm;
+	int temp_range_cnt;
+	int temp_range_bound_cnt;
+	int temp_range_map[PUC_BATT_CURVE_TEMP_RANGE_MAX];
+	bool temp_range_map_inited;
 };
 
 #define PUC_DATA_SIZE	sizeof(struct puc_strategy_data)
@@ -75,10 +81,27 @@ static const char * const puc_strategy_temp[] = {
 	[PUC_BATT_CURVE_TEMP_RANGE_COOL]	= "strategy_temp_cool",
 	[PUC_BATT_CURVE_TEMP_RANGE_LITTLE_COOL]	= "strategy_temp_little_cool",
 	[PUC_BATT_CURVE_TEMP_RANGE_LITTLE_COOL_HIGH]	= "strategy_temp_little_cool_high",
+	[PUC_BATT_CURVE_TEMP_RANGE_NORMAL_LOW_PRE]	= "strategy_temp_normal_low_pre",
 	[PUC_BATT_CURVE_TEMP_RANGE_NORMAL_LOW]	= "strategy_temp_normal_low",
 	[PUC_BATT_CURVE_TEMP_RANGE_NORMAL_HIGH]	= "strategy_temp_normal_high",
 	[PUC_BATT_CURVE_TEMP_RANGE_WARM]	= "strategy_temp_warm",
 };
+
+static bool puc_temp_range_is_legacy_required(int temp_idx)
+{
+	switch (temp_idx) {
+	case PUC_BATT_CURVE_TEMP_RANGE_LITTLE_COLD:
+	case PUC_BATT_CURVE_TEMP_RANGE_COOL:
+	case PUC_BATT_CURVE_TEMP_RANGE_LITTLE_COOL:
+	case PUC_BATT_CURVE_TEMP_RANGE_LITTLE_COOL_HIGH:
+	case PUC_BATT_CURVE_TEMP_RANGE_NORMAL_LOW:
+	case PUC_BATT_CURVE_TEMP_RANGE_NORMAL_HIGH:
+	case PUC_BATT_CURVE_TEMP_RANGE_WARM:
+		return true;
+	default:
+		return false;
+	}
+}
 
 static struct oplus_mms *comm_topic;
 static struct oplus_mms *gauge_topic;
@@ -95,40 +118,6 @@ __maybe_unused static bool is_gauge_topic_available(void)
 	if (!gauge_topic)
 		gauge_topic = oplus_mms_get_by_name("gauge");
 	return !!gauge_topic;
-}
-
-static int __read_signed_data_from_node(struct device_node *node,
-					const char *prop_str,
-					s32 *addr, int len_max)
-{
-	int rc = 0, length;
-
-	if (!node || !prop_str || !addr) {
-		chg_err("Invalid parameters passed\n");
-		return -EINVAL;
-	}
-
-	rc = of_property_count_elems_of_size(node, prop_str, sizeof(s32));
-	if (rc < 0) {
-		chg_err("Count %s failed, rc=%d\n", prop_str, rc);
-		return rc;
-	}
-
-	length = rc;
-
-	if (length != len_max) {
-		chg_err("entries(%d) num error, only %d allowed\n", length,
-			len_max);
-		return -EINVAL;
-	}
-
-	rc = of_property_read_u32_array(node, prop_str, (u32 *)addr, length);
-	if (rc) {
-		chg_err("Read %s failed, rc=%d\n", prop_str, rc);
-		return rc;
-	}
-
-	return rc;
 }
 
 static int __read_unsigned_data_from_node(struct device_node *node,
@@ -163,6 +152,201 @@ static int __read_unsigned_data_from_node(struct device_node *node,
 	}
 
 	return length;
+}
+
+static int puc_read_temp_range_by_node(struct device_node *node,
+				       struct puc_strategy *puc,
+				       int *temp_range_cnt)
+{
+	int rc;
+	int temp_range_bound_cnt;
+
+	temp_range_bound_cnt = of_property_count_elems_of_size(node, "oplus,temp_range", sizeof(s32));
+	if (temp_range_bound_cnt <= 1 || temp_range_bound_cnt > PUC_BATT_CURVE_TEMP_RANGE_MAX + 1) {
+		chg_err("oplus,temp_range entries(%d) num error, need >= 2 and <= %d\n",
+			temp_range_bound_cnt, PUC_BATT_CURVE_TEMP_RANGE_MAX + 1);
+		return -EINVAL;
+	}
+	rc = of_property_read_u32_array(node, "oplus,temp_range",
+					(u32 *)puc->temp_range_data,
+					temp_range_bound_cnt);
+	if (rc < 0)
+		return rc;
+
+	puc->temp_range_bound_cnt = temp_range_bound_cnt;
+	puc->temp_range_cnt = temp_range_bound_cnt - 1;
+	*temp_range_cnt = puc->temp_range_cnt;
+
+	return 0;
+}
+
+static int puc_read_iterm_by_node(struct device_node *node, int temp_range_cnt,
+				  int32_t *iterm_buf, int *iterm_len)
+{
+	int length;
+	int rc;
+
+	*iterm_len = 0;
+	length = of_property_count_elems_of_size(node, "oplus,iterm", sizeof(s32));
+	if (length < 0) {
+		chg_err("get oplus,iterm count error, rc=%d\n", length);
+		return 0;
+	}
+	if (length < temp_range_cnt) {
+		chg_err("oplus,iterm entries(%d) num error, need >= %d\n",
+			length, temp_range_cnt);
+		return -EINVAL;
+	}
+
+	*iterm_len = min(length, (int)PUC_BATT_CURVE_TEMP_RANGE_MAX);
+	rc = of_property_read_u32_array(node, "oplus,iterm", (u32 *)iterm_buf, *iterm_len);
+	if (rc < 0) {
+		chg_err("get oplus,iterm property error, rc=%d\n", rc);
+		return rc;
+	}
+
+	return 0;
+}
+
+static int puc_build_temp_range_map(struct puc_strategy *puc,
+				    struct device_node *soc_node,
+				    int *temp_range_cnt)
+{
+	int j;
+	int length;
+	int temp_prop_cnt = 0;
+
+	for (j = 0; j < PUC_BATT_CURVE_TEMP_RANGE_MAX; j++) {
+		length = of_property_count_elems_of_size(
+			soc_node, puc_strategy_temp[j], sizeof(u32));
+		if (length < 0) {
+			if (puc_temp_range_is_legacy_required(j)) {
+				chg_err("can't find legacy %s property, rc=%d\n",
+					puc_strategy_temp[j], length);
+				return length;
+			}
+			continue;
+		}
+		if (temp_prop_cnt >= PUC_BATT_CURVE_TEMP_RANGE_MAX) {
+			chg_err("temp_range_map overflow, cnt=%d\n", temp_prop_cnt);
+			return -EINVAL;
+		}
+		puc->temp_range_map[temp_prop_cnt++] = j;
+	}
+	if (temp_prop_cnt <= 0)
+		return -ENODEV;
+	if (temp_prop_cnt != *temp_range_cnt) {
+		chg_err("temp_range property num(%d) mismatch range num(%d)\n",
+			temp_prop_cnt, *temp_range_cnt);
+		return -EINVAL;
+	}
+
+	puc->temp_range_map_inited = true;
+	return 0;
+}
+
+static int puc_read_temp_curve_by_node(struct device_node *soc_node, int temp_idx,
+				       struct puc_strategy_temp_curves *curve)
+{
+	int length;
+	int rc;
+
+	length = of_property_count_elems_of_size(
+		soc_node, puc_strategy_temp[temp_idx], sizeof(u32));
+	if (length < 0) {
+		chg_err("can't find %s property, rc=%d\n",
+			puc_strategy_temp[temp_idx], length);
+		return length;
+	}
+	rc = length * sizeof(u32);
+	if (rc % PUC_DATA_SIZE != 0) {
+		chg_err("buf size does not meet the requirements, size=%d\n", rc);
+		return -EINVAL;
+	}
+
+	curve->num = rc / PUC_DATA_SIZE;
+	curve->data = kzalloc(rc, GFP_KERNEL);
+	if (curve->data == NULL) {
+		chg_err("alloc strategy data memory error\n");
+		return -ENOMEM;
+	}
+
+	rc = of_property_read_u32_array(
+			soc_node, puc_strategy_temp[temp_idx],
+			(u32 *)curve->data, length);
+	if (rc < 0) {
+		chg_err("read %s property error, rc=%d\n",
+			puc_strategy_temp[temp_idx], rc);
+		kfree(curve->data);
+		curve->data = NULL;
+		return rc;
+	}
+
+	return 0;
+}
+
+static void puc_read_temp_type_by_node(struct device_node *node, struct puc_strategy *puc)
+{
+	u32 data;
+	int rc;
+
+	rc = of_property_read_u32(node, "oplus,temp_type", &data);
+	if (rc < 0) {
+		chg_err("oplus,temp_type reading failed, rc=%d\n", rc);
+		puc->temp_type = STRATEGY_USE_SHELL_TEMP;
+		return;
+	}
+	puc->temp_type = (uint32_t)data;
+}
+
+static int puc_read_soc_range_by_node(struct device_node *node, struct puc_strategy *puc)
+{
+	return __read_unsigned_data_from_node(node, "oplus,soc_range",
+					      (u32 *)puc->soc_range_data,
+					      PUC_BATT_CURVE_SOC_RANGE_MAX + 1);
+}
+
+static int puc_fill_iterm_data(struct puc_strategy *puc, const int32_t *iterm_buf,
+			       int iterm_len, int temp_range_cnt)
+{
+	int j;
+	int temp_idx;
+
+	if (iterm_len > 0 && iterm_len < temp_range_cnt) {
+		chg_err("oplus,iterm entries(%d) num error, need >= %d\n",
+			iterm_len, temp_range_cnt);
+		return -EINVAL;
+	}
+	if (iterm_len == 0)
+		return 0;
+
+	for (j = 0; j < temp_range_cnt; j++) {
+		temp_idx = puc->temp_range_map[j];
+		if (temp_idx < 0 || temp_idx >= PUC_BATT_CURVE_TEMP_RANGE_MAX) {
+			chg_err("invalid temp_idx=%d\n", temp_idx);
+			return -EINVAL;
+		}
+		puc->iterm_data[temp_idx] = iterm_buf[j];
+	}
+	return 0;
+}
+
+static int puc_load_curves_by_node(struct puc_strategy *puc,
+				   struct device_node *soc_node,
+				   int soc_idx, int temp_range_cnt)
+{
+	int j;
+	int rc;
+	int temp_idx;
+
+	for (j = 0; j < temp_range_cnt; j++) {
+		temp_idx = puc->temp_range_map[j];
+		rc = puc_read_temp_curve_by_node(
+			soc_node, temp_idx, &puc->soc_curves[soc_idx].temp_curves[temp_idx]);
+		if (rc < 0)
+			return rc;
+	}
+	return 0;
 }
 
 static int puc_strategy_get_soc(struct puc_strategy *puc, int *soc)
@@ -306,6 +490,7 @@ puc_get_temp_region(struct puc_strategy *puc)
 	enum puc_temp_range temp_region = PUC_BATT_CURVE_TEMP_RANGE_INVALID;
 	int i;
 	int rc;
+	int temp_region_idx = -1;
 
 	rc = puc_strategy_get_temp(puc, &temp);
 	if (rc < 0) {
@@ -313,13 +498,15 @@ puc_get_temp_region(struct puc_strategy *puc)
 		return PUC_BATT_CURVE_TEMP_RANGE_INVALID;
 	}
 
-	for (i = 0; i <= PUC_BATT_CURVE_TEMP_RANGE_MAX; i++) {
+	for (i = 0; i < puc->temp_range_bound_cnt; i++) {
 		if (temp < puc->temp_range_data[i]) {
 			if (i != 0)
-				temp_region = i - 1;
+				temp_region_idx = i - 1;
 			break;
 		}
 	}
+	if (temp_region_idx >= 0 && temp_region_idx < puc->temp_range_cnt)
+		temp_region = puc->temp_range_map[temp_region_idx];
 	if((puc->temp_region != temp_region) && (puc->temp_region != PUC_BATT_CURVE_TEMP_RANGE_INVALID)) {
 		chg_err("puc->temp_region != temp_region use puc->temp_region\n");
 		return puc->temp_region;
@@ -338,11 +525,13 @@ static struct oplus_chg_strategy *
 puc_strategy_alloc_by_node(struct device_node *node)
 {
 	struct puc_strategy *puc;
-	u32 data;
 	int rc;
-	int i, j;
-	int length;
+	int i;
+	int j;
 	struct device_node *soc_node;
+	int temp_range_cnt;
+	int iterm_len = 0;
+	int32_t iterm_buf[PUC_BATT_CURVE_TEMP_RANGE_MAX];
 
 	if (node == NULL) {
 		chg_err("node is NULL\n");
@@ -355,34 +544,20 @@ puc_strategy_alloc_by_node(struct device_node *node)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	rc = of_property_read_u32(node, "oplus,temp_type", &data);
-	if (rc < 0) {
-		chg_err("oplus,temp_type reading failed, rc=%d\n", rc);
-		puc->temp_type = STRATEGY_USE_SHELL_TEMP;
-	} else {
-		puc->temp_type = (uint32_t)data;
-	}
-	rc = __read_unsigned_data_from_node(node, "oplus,soc_range",
-					    (u32 *)puc->soc_range_data,
-					    PUC_BATT_CURVE_SOC_RANGE_MAX + 1);
+	puc_read_temp_type_by_node(node, puc);
+	rc = puc_read_soc_range_by_node(node, puc);
 	if (rc < 0) {
 		chg_err("get oplus,soc_range property error, rc=%d\n", rc);
 		goto base_info_err;
 	}
-	rc = __read_signed_data_from_node(node, "oplus,temp_range",
-					  (s32 *)puc->temp_range_data,
-					  PUC_BATT_CURVE_TEMP_RANGE_MAX + 1);
+	rc = puc_read_temp_range_by_node(node, puc, &temp_range_cnt);
 	if (rc < 0) {
 		chg_err("get oplus,temp_range property error, rc=%d\n", rc);
 		goto base_info_err;
 	}
-
-	rc = __read_signed_data_from_node(node, "oplus,iterm",
-					  (s32 *)puc->iterm_data,
-					  PUC_BATT_CURVE_TEMP_RANGE_MAX);
+	rc = puc_read_iterm_by_node(node, temp_range_cnt, iterm_buf, &iterm_len);
 	if (rc < 0)
-		chg_err("get oplus,iterm property error, rc=%d\n", rc);
-
+		goto base_info_err;
 	for (i = 0; i < PUC_BATT_CURVE_SOC_RANGE_MAX; i++) {
 		soc_node = of_get_child_by_name(node, puc_strategy_soc[i]);
 		if (!soc_node) {
@@ -391,39 +566,20 @@ puc_strategy_alloc_by_node(struct device_node *node)
 			goto data_err;
 		}
 
-		for (j = 0; j < PUC_BATT_CURVE_TEMP_RANGE_MAX; j++) {
-			length = of_property_count_elems_of_size(
-				soc_node, puc_strategy_temp[j], sizeof(u32));
-			if (length < 0) {
-				chg_err("can't find %s property, rc=%d\n",
-					puc_strategy_temp[j], length);
-				goto data_err;
-			}
-			rc = length * sizeof(u32);
-			if (rc % PUC_DATA_SIZE != 0) {
-				chg_err("buf size does not meet the requirements, size=%d\n", rc);
-				rc = -EINVAL;
-				goto data_err;
-			}
-
-			puc->soc_curves[i].temp_curves[j].num = rc / PUC_DATA_SIZE;
-			puc->soc_curves[i].temp_curves[j].data = kzalloc(rc , GFP_KERNEL);
-			if (puc->soc_curves[i].temp_curves[j].data == NULL) {
-				chg_err("alloc strategy data memory error\n");
-				rc = -ENOMEM;
-				goto data_err;
-			}
-
-			rc = of_property_read_u32_array(
-					soc_node, puc_strategy_temp[j],
-					(u32 *)puc->soc_curves[i].temp_curves[j].data,
-					length);
+		if (!puc->temp_range_map_inited) {
+			rc = puc_build_temp_range_map(puc, soc_node, &temp_range_cnt);
 			if (rc < 0) {
-				chg_err("read %s property error, rc=%d\n",
-					puc_strategy_temp[j], rc);
+				chg_err("temp_range property not found\n");
 				goto data_err;
 			}
+			rc = puc_fill_iterm_data(puc, iterm_buf, iterm_len, temp_range_cnt);
+			if (rc < 0)
+				goto data_err;
 		}
+
+		rc = puc_load_curves_by_node(puc, soc_node, i, temp_range_cnt);
+		if (rc < 0)
+			goto data_err;
 	}
 
 	return (struct oplus_chg_strategy *)puc;
@@ -444,16 +600,162 @@ base_info_err:
 
 #if IS_ENABLED(CONFIG_OPLUS_DYNAMIC_CONFIG_CHARGER)
 #define TMP_BUF_SIZE 10
+static int puc_cfg_build_name(char *str_buf, size_t buf_size, const char *node_name,
+			      const char *prop1, const char *prop2)
+{
+	int index;
+	size_t node_len;
+
+	if (!str_buf || !node_name || !prop1 || buf_size == 0)
+		return -EINVAL;
+	node_len = strlen(node_name);
+	if (node_len >= buf_size - 1)
+		return -EINVAL;
+
+	if (prop2)
+		index = snprintf(str_buf, buf_size - 1, "%s:%s:%s", node_name, prop1, prop2);
+	else
+		index = snprintf(str_buf, buf_size - 1, "%s:%s", node_name, prop1);
+	if (index < 0 || index >= (int)(buf_size - 1))
+		return -EINVAL;
+	str_buf[index] = 0;
+	return 0;
+}
+
+static int puc_cfg_find_data_head(struct oplus_param_head *head, char *str_buf,
+				  const char *node_name, const char *prop1, const char *prop2,
+				  struct oplus_cfg_data_head **data_head)
+{
+	int rc;
+
+	if (!data_head)
+		return -EINVAL;
+	rc = puc_cfg_build_name(str_buf, PAGE_SIZE, node_name, prop1, prop2);
+	if (rc < 0)
+		return rc;
+	*data_head = oplus_cfg_find_param_by_name(head, str_buf);
+	if (*data_head == NULL)
+		return -ENODATA;
+	return 0;
+}
+
+static int puc_cfg_read_u32_array(struct oplus_param_head *head, char *str_buf,
+				  const char *node_name, const char *prop,
+				  u32 *buf, size_t buf_len, int *count)
+{
+	struct oplus_cfg_data_head *data_head;
+	ssize_t data_len;
+	int rc;
+
+	if (!buf || !count)
+		return -EINVAL;
+	rc = puc_cfg_find_data_head(head, str_buf, node_name, prop, NULL, &data_head);
+	if (rc < 0)
+		return rc;
+	data_len = oplus_cfg_get_data_size(data_head);
+	if (data_len % sizeof(buf[0]) != 0)
+		return -EINVAL;
+	*count = data_len / sizeof(buf[0]);
+	if (*count > (int)buf_len)
+		return -EINVAL;
+	rc = oplus_cfg_get_data(data_head, (u8 *)buf, data_len);
+	if (rc < 0)
+		return rc;
+	return 0;
+}
+
+static int puc_cfg_build_temp_range_map(struct oplus_param_head *head, char *str_buf,
+					const char *node_name, const char *soc_name,
+					struct puc_strategy *puc, int *temp_range_cnt)
+{
+	int j;
+	int rc;
+	int temp_prop_cnt = 0;
+	struct oplus_cfg_data_head *data_head;
+
+	for (j = 0; j < PUC_BATT_CURVE_TEMP_RANGE_MAX; j++) {
+		rc = puc_cfg_find_data_head(head, str_buf, node_name, soc_name,
+					    puc_strategy_temp[j], &data_head);
+		if (rc < 0) {
+			if (puc_temp_range_is_legacy_required(j)) {
+				chg_err("can't find legacy %s:%s:%s data head, rc=%d\n",
+					node_name, soc_name, puc_strategy_temp[j], rc);
+				return rc;
+			}
+			continue;
+		}
+		if (temp_prop_cnt >= PUC_BATT_CURVE_TEMP_RANGE_MAX) {
+			chg_err("temp_range_map overflow, cnt=%d\n", temp_prop_cnt);
+			return -EINVAL;
+		}
+		puc->temp_range_map[temp_prop_cnt++] = j;
+	}
+	if (temp_prop_cnt <= 0)
+		return -ENODATA;
+	if (temp_prop_cnt != *temp_range_cnt) {
+		chg_err("temp_range property num(%d) mismatch range num(%d)\n",
+			temp_prop_cnt, *temp_range_cnt);
+		return -EINVAL;
+	}
+	puc->temp_range_map_inited = true;
+	return 0;
+}
+
+static int puc_cfg_read_temp_curve(struct oplus_param_head *head, char *str_buf,
+				   const char *node_name, const char *soc_name,
+				   const char *temp_name, struct puc_strategy_temp_curves *curve)
+{
+	int rc;
+	int k;
+	ssize_t data_len;
+	struct oplus_cfg_data_head *data_head;
+
+	rc = puc_cfg_find_data_head(head, str_buf, node_name, soc_name, temp_name, &data_head);
+	if (rc < 0) {
+		chg_err("get %s:%s:%s data head error\n", node_name, soc_name, temp_name);
+		return rc;
+	}
+	data_len = oplus_cfg_get_data_size(data_head);
+	if (data_len % PUC_DATA_SIZE != 0) {
+		chg_err("%s:%s:%s: buf size does not meet the requirements, size=%ld\n",
+			node_name, soc_name, temp_name, data_len);
+		return -EINVAL;
+	}
+	curve->num = data_len / PUC_DATA_SIZE;
+	curve->data = kzalloc(data_len, GFP_KERNEL);
+	if (curve->data == NULL) {
+		chg_err("alloc strategy data memory error\n");
+		return -ENOMEM;
+	}
+	rc = oplus_cfg_get_data(data_head, (u8 *)curve->data, data_len);
+	if (rc < 0) {
+		chg_err("get %s:%s:%s data error, rc=%d\n", node_name, soc_name, temp_name, rc);
+		kfree(curve->data);
+		curve->data = NULL;
+		return rc;
+	}
+	for (k = 0; k < curve->num; k++) {
+		curve->data[k].target_vbus = le32_to_cpu(curve->data[k].target_vbus);
+		curve->data[k].target_vbat = le32_to_cpu(curve->data[k].target_vbat);
+		curve->data[k].target_ibus = le32_to_cpu(curve->data[k].target_ibus);
+		curve->data[k].flags = le32_to_cpu(curve->data[k].flags);
+		curve->data[k].target_time = le32_to_cpu(curve->data[k].target_time);
+	}
+	return 0;
+}
+
 static struct oplus_chg_strategy *puc_strategy_alloc_by_param_head(const char *node_name, struct oplus_param_head *head)
 {
 	struct puc_strategy *puc;
 	int rc;
-	int i, j, k;
-	struct oplus_cfg_data_head *data_head;
+	int i;
+	int j;
 	int32_t buf[TMP_BUF_SIZE];
-	ssize_t data_len;
 	char *str_buf;
-	int index = 0;
+	int temp_range_bound_cnt;
+	int temp_range_cnt;
+	int temp_idx;
+	int count;
 
 	if (node_name == NULL) {
 		chg_err("node_name is NULL\n");
@@ -476,127 +778,67 @@ static struct oplus_chg_strategy *puc_strategy_alloc_by_param_head(const char *n
 		goto str_buf_err;
 	}
 
-	index = snprintf(str_buf, PAGE_SIZE - 1, "%s:oplus,temp_type", node_name);
-	if (index < 0 || index >= PAGE_SIZE) {
-		rc = -EFAULT;
-		goto base_info_err;
-	}
-	str_buf[index] = 0;
-	data_head = oplus_cfg_find_param_by_name(head, str_buf);
-	if (data_head == NULL) {
-		rc = -ENODATA;
+	rc = puc_cfg_read_u32_array(head, str_buf, node_name, "oplus,temp_type",
+				    (u32 *)buf, TMP_BUF_SIZE, &count);
+	if (rc < 0 || count < 1) {
 		chg_err("get oplus,temp_type data head error\n");
-		goto base_info_err;
-	}
-	rc = oplus_cfg_get_data(data_head, (u8 *)buf, sizeof(buf[0]));
-	if (rc < 0) {
-		chg_err("get oplus,temp_type data error, rc=%d\n", rc);
 		goto base_info_err;
 	}
 	puc->temp_type = (uint32_t)(le32_to_cpu(buf[0]));
 	chg_info("[TEST]:oplus,temp_type = %u\n", puc->temp_type);
 
-	index = snprintf(str_buf, PAGE_SIZE - 1, "%s:oplus,soc_range", node_name);
-	if (index < 0 || index >= PAGE_SIZE) {
-		rc = -EFAULT;
-		goto base_info_err;
-	}
-	str_buf[index] = 0;
-	data_head = oplus_cfg_find_param_by_name(head, str_buf);
-	if (data_head == NULL) {
-		rc = -ENODATA;
+	rc = puc_cfg_read_u32_array(head, str_buf, node_name, "oplus,soc_range",
+				    (u32 *)buf, TMP_BUF_SIZE, &count);
+	if (rc < 0 || count != PUC_BATT_CURVE_SOC_RANGE_MAX + 1) {
 		chg_err("get oplus,soc_range data head error\n");
-		goto base_info_err;
-	}
-	data_len = oplus_cfg_get_data_size(data_head);
-	if (data_len / sizeof(buf[0]) != PUC_BATT_CURVE_SOC_RANGE_MAX + 1) {
 		rc = -EINVAL;
-		chg_err("configuration data size error, data_len=%ld\n", data_len / sizeof(buf[0]));
-		goto base_info_err;
-	}
-	rc = oplus_cfg_get_data(data_head, (u8 *)buf, data_len);
-	if (rc < 0) {
-		chg_err("get oplus,soc_range data error, rc=%d\n", rc);
 		goto base_info_err;
 	}
 	for (i = 0; i < PUC_BATT_CURVE_SOC_RANGE_MAX + 1; i++)
 		puc->soc_range_data[i] = (uint32_t)(le32_to_cpu(buf[i]));
 
-	index = snprintf(str_buf, PAGE_SIZE - 1, "%s:oplus,temp_range", node_name);
-	if (index < 0 || index >= PAGE_SIZE) {
-		rc = -EFAULT;
-		goto base_info_err;
-	}
-	str_buf[index] = 0;
-	data_head = oplus_cfg_find_param_by_name(head, str_buf);
-	if (data_head == NULL) {
-		rc = -ENODATA;
+	rc = puc_cfg_read_u32_array(head, str_buf, node_name, "oplus,temp_range",
+				    (u32 *)buf, TMP_BUF_SIZE, &count);
+	if (rc < 0) {
 		chg_err("get oplus,temp_range data head error\n");
 		goto base_info_err;
 	}
-	data_len = oplus_cfg_get_data_size(data_head);
-	if (data_len / sizeof(buf[0]) != PUC_BATT_CURVE_TEMP_RANGE_MAX + 1) {
+	temp_range_bound_cnt = count;
+	if (temp_range_bound_cnt <= 1 || temp_range_bound_cnt > PUC_BATT_CURVE_TEMP_RANGE_MAX + 1) {
+		chg_err("oplus,temp_range entries(%d) num error, need >= 2 and <= %d\n",
+			temp_range_bound_cnt, PUC_BATT_CURVE_TEMP_RANGE_MAX + 1);
 		rc = -EINVAL;
-		chg_err("configuration data size error, data_len=%ld\n", data_len / sizeof(buf[0]));
 		goto base_info_err;
 	}
-	rc = oplus_cfg_get_data(data_head, (u8 *)buf, data_len);
-	if (rc < 0) {
-		chg_err("get oplus,temp_range data error, rc=%d\n", rc);
-		goto base_info_err;
-	}
-	for (i = 0; i < PUC_BATT_CURVE_TEMP_RANGE_MAX + 1; i++)
+	for (i = 0; i < temp_range_bound_cnt; i++)
 		puc->temp_range_data[i] = (uint32_t)le32_to_cpu(buf[i]);
+	puc->temp_range_bound_cnt = temp_range_bound_cnt;
+	puc->temp_range_cnt = temp_range_bound_cnt - 1;
+	temp_range_cnt = puc->temp_range_cnt;
 
 	for (i = 0; i < PUC_BATT_CURVE_SOC_RANGE_MAX; i++) {
-		for (j = 0; j < PUC_BATT_CURVE_TEMP_RANGE_MAX; j++) {
-			index = snprintf(str_buf, PAGE_SIZE - 1, "%s:%s:%s", node_name, puc_strategy_soc[i],
-					 puc_strategy_temp[j]);
-			if (index < 0 || index >= PAGE_SIZE) {
-				rc = -EINVAL;
-				goto data_err;
-			}
-			str_buf[index] = 0;
-
-			data_head = oplus_cfg_find_param_by_name(head, str_buf);
-			if (data_head == NULL) {
-				rc = -ENODATA;
-				chg_err("get %s:%s:%s data head error\n", node_name, puc_strategy_soc[i],
-					puc_strategy_temp[j]);
-				goto data_err;
-			}
-			data_len = oplus_cfg_get_data_size(data_head);
-			if (data_len % PUC_DATA_SIZE != 0) {
-				chg_err("%s:%s:%s: buf size does not meet the requirements, size=%ld\n", node_name,
-					puc_strategy_soc[i], puc_strategy_temp[j], data_len);
-				rc = -EINVAL;
-				goto data_err;
-			}
-			puc->soc_curves[i].temp_curves[j].num = data_len / PUC_DATA_SIZE;
-			puc->soc_curves[i].temp_curves[j].data = kzalloc(data_len, GFP_KERNEL);
-			if (puc->soc_curves[i].temp_curves[j].data == NULL) {
-				chg_err("alloc strategy data memory error\n");
-				rc = -ENOMEM;
-				goto data_err;
-			}
-			rc = oplus_cfg_get_data(data_head, (u8 *)puc->soc_curves[i].temp_curves[j].data, data_len);
+		if (!puc->temp_range_map_inited) {
+			rc = puc_cfg_build_temp_range_map(head, str_buf, node_name,
+							  puc_strategy_soc[i], puc, &temp_range_cnt);
 			if (rc < 0) {
-				chg_err("get %s:%s:%s data error, rc=%d\n", node_name, puc_strategy_soc[i],
-					puc_strategy_temp[j], rc);
+				chg_err("temp_range property not found\n");
 				goto data_err;
 			}
-			for (k = 0; k < puc->soc_curves[i].temp_curves[j].num; k++) {
-				puc->soc_curves[i].temp_curves[j].data[k].target_vbus =
-					le32_to_cpu(puc->soc_curves[i].temp_curves[j].data[k].target_vbus);
-				puc->soc_curves[i].temp_curves[j].data[k].target_vbat =
-					le32_to_cpu(puc->soc_curves[i].temp_curves[j].data[k].target_vbat);
-				puc->soc_curves[i].temp_curves[j].data[k].target_ibus =
-					le32_to_cpu(puc->soc_curves[i].temp_curves[j].data[k].target_ibus);
-				puc->soc_curves[i].temp_curves[j].data[k].flags =
-					le32_to_cpu(puc->soc_curves[i].temp_curves[j].data[k].flags);
-				puc->soc_curves[i].temp_curves[j].data[k].target_time =
-					le32_to_cpu(puc->soc_curves[i].temp_curves[j].data[k].target_time);
+		}
+
+		for (j = 0; j < temp_range_cnt; j++) {
+			temp_idx = puc->temp_range_map[j];
+			if (temp_idx < 0 ||
+			    temp_idx >= PUC_BATT_CURVE_TEMP_RANGE_MAX) {
+				chg_err("invalid temp_idx=%d\n", temp_idx);
+				rc = -EINVAL;
+				goto data_err;
 			}
+			rc = puc_cfg_read_temp_curve(head, str_buf, node_name, puc_strategy_soc[i],
+						     puc_strategy_temp[temp_idx],
+						     &puc->soc_curves[i].temp_curves[temp_idx]);
+			if (rc < 0)
+				goto data_err;
 		}
 	}
 
